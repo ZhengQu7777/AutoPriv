@@ -1,0 +1,7 @@
+Review this candidate config before execution.
+planner: [[PLANNER_JSON]]
+probe_report: [[PROBE_REPORT_JSON]]
+config: [[CONFIG_JSON]]
+comm_trace: [[COMM_TRACE_JSON]]
+
+Provide static risk-focused review and a next action.

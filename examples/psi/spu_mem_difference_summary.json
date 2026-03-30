@@ -1,0 +1,14 @@
+{
+  "task": "spu_mem_difference",
+  "left_side_rank": 0,
+  "alice_ids": [
+    "u1"
+  ],
+  "bob_ids": [
+    "u4"
+  ],
+  "outputs": {
+    "alice": "examples/psi/alice_diff_out.csv",
+    "bob": "examples/psi/bob_diff_out.csv"
+  }
+}

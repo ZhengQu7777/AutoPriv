@@ -1,0 +1,5 @@
+[Planner]
+instruction: 整理输出目录结构测试
+goals: ['Test directory structure output', 'Ensure proper organization of output files', 'Evaluate performance metrics']
+constraints: {'preferred_backend': 'mp-spdz', 'priority': 'balanced'}
+probe_plan: {'objective': 'Assess the efficiency and correctness of the output directory structure', 'metrics': ['output file count', 'directory depth', 'file access time'], 'sample_count': 100, 'interval_s': 180.0, 'tool_args': {'output_path': '/path/to/output', 'file_types': ['txt', 'csv', 'json']}, 'prober_prompt': 'Evaluate the directory structure for organization and performance.'}

@@ -1,0 +1,35 @@
+{
+  "instruction": "整理输出目录结构测试",
+  "goals": [
+    "Test directory structure output",
+    "Ensure proper organization of output files",
+    "Evaluate performance metrics"
+  ],
+  "constraints": {
+    "preferred_backend": "mp-spdz",
+    "priority": "balanced"
+  },
+  "probe_plan": {
+    "objective": "Assess the efficiency and correctness of the output directory structure",
+    "metrics": [
+      "output file count",
+      "directory depth",
+      "file access time"
+    ],
+    "sample_count": 100,
+    "interval_s": 180.0,
+    "tool_args": {
+      "output_path": "/path/to/output",
+      "file_types": [
+        "txt",
+        "csv",
+        "json"
+      ]
+    },
+    "prober_prompt": "Evaluate the directory structure for organization and performance."
+  },
+  "planner_prompt": {
+    "system": "You are the planner in a multi-agent LLM system for privacy-computing auto-configuration.\nReturn JSON only.\nRequired top-level keys:\n- goals: list[str]\n- constraints: object\n- probe_plan: object\n\nProbe plan schema:\n- objective: string\n- metrics: list[str]\n- sample_count: int\n- interval_s: number\n- tool_args: object\n- prober_prompt: string\n\nUse concise fields and machine-readable values.\n",
+    "user": "Task:\n整理输出目录结构测试\n\nGenerate an initial plan and probe strategy for this task.\nRules:\n1) constraints may include preferred_backend in {mp-spdz, secretflow} and priority in {latency, bandwidth, balanced}.\n2) Provide a practical probe_plan for prober.\n3) If long-running task is implied, set probe_plan.interval_s to a few minutes.\n"
+  }
+}

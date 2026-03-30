@@ -1,0 +1,3 @@
+Collect local runtime signals for backend selection.
+Primary metrics: RTT, bandwidth, CPU cores, memory.
+Prefer low overhead probing and deterministic output.

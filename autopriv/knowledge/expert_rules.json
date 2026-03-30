@@ -1,0 +1,36 @@
+{
+  "rules": [
+    {
+      "id": "high_rtt_pref_offline",
+      "when": {
+        "min_rtt_ms": 120,
+        "priority": "latency"
+      },
+      "recommendation": {
+        "mode": "offline_precompute",
+        "profile": "high_latency"
+      },
+      "note": "High RTT favors batching/precomputation to reduce online round-trips."
+    },
+    {
+      "id": "low_bandwidth_compress",
+      "when": {
+        "max_bandwidth_mbps": 15
+      },
+      "recommendation": {
+        "profile": "low_bandwidth"
+      },
+      "note": "Low bandwidth requires reduced transfer and compact protocol settings."
+    },
+    {
+      "id": "prefer_secretflow",
+      "when": {
+        "preferred_backend": "secretflow"
+      },
+      "recommendation": {
+        "backend": "secretflow"
+      },
+      "note": "User or policy explicitly prefers SecretFlow backend."
+    }
+  ]
+}

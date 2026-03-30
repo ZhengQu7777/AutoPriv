@@ -1,0 +1,6 @@
+Task: [[TASK]]
+Current state JSON: [[STATE_JSON]]
+Latest observation JSON: [[OBS_JSON]]
+Communication trace JSON: [[COMM_TRACE_JSON]]
+
+Choose the next best single action now.

@@ -1,0 +1,6 @@
+[Configer]
+backend: mp-spdz
+mode: offline_precompute
+parallelism: 4
+profile: high_latency
+notes: ['Bandwidth unavailable, use low-transfer policy']

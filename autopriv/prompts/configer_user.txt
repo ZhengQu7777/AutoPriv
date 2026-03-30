@@ -1,0 +1,8 @@
+Refine configuration based on context:
+planner: [[PLANNER_JSON]]
+probe: [[PROBE_JSON]]
+default_backend: [[DEFAULT_BACKEND]]
+default_mode: [[DEFAULT_MODE]]
+default_profile: [[DEFAULT_PROFILE]]
+kb_hits: [[KB_HITS_JSON]]
+comm_trace: [[COMM_TRACE_JSON]]

@@ -1,0 +1,74 @@
+{
+  "prober": {
+    "ts_utc": "2026-03-24T06:42:12.066375+00:00",
+    "bandwidth_mbps": null,
+    "rtt_ms": 340.1815251757701,
+    "cpu_cores": 40,
+    "memory_gb": 1007.1362266540527,
+    "raw": {
+      "rtt_ms": 340.1815251757701,
+      "bandwidth_mbps": null,
+      "cpu_cores": 40,
+      "memory_gb": 1007.1362266540527
+    }
+  },
+  "probe_report": {
+    "sample_count": 3,
+    "interval_s": 300.0,
+    "samples": [
+      {
+        "ts_utc": "2026-03-24T06:42:04.762132+00:00",
+        "bandwidth_mbps": null,
+        "rtt_ms": 338.50960340350866,
+        "cpu_cores": 40,
+        "memory_gb": 1007.1362266540527,
+        "raw": {
+          "rtt_ms": 338.50960340350866,
+          "bandwidth_mbps": null,
+          "cpu_cores": 40,
+          "memory_gb": 1007.1362266540527
+        }
+      },
+      {
+        "ts_utc": "2026-03-24T06:42:08.429184+00:00",
+        "bandwidth_mbps": null,
+        "rtt_ms": 338.5800011456013,
+        "cpu_cores": 40,
+        "memory_gb": 1007.1362266540527,
+        "raw": {
+          "rtt_ms": 338.5800011456013,
+          "bandwidth_mbps": null,
+          "cpu_cores": 40,
+          "memory_gb": 1007.1362266540527
+        }
+      },
+      {
+        "ts_utc": "2026-03-24T06:42:12.066375+00:00",
+        "bandwidth_mbps": null,
+        "rtt_ms": 340.1815251757701,
+        "cpu_cores": 40,
+        "memory_gb": 1007.1362266540527,
+        "raw": {
+          "rtt_ms": 340.1815251757701,
+          "bandwidth_mbps": null,
+          "cpu_cores": 40,
+          "memory_gb": 1007.1362266540527
+        }
+      }
+    ],
+    "summary": {
+      "avg_rtt_ms": 339.09037657496003,
+      "avg_bandwidth_mbps": null,
+      "max_rtt_ms": 340.1815251757701,
+      "min_bandwidth_mbps": null,
+      "cpu_cores": 40,
+      "memory_gb": 1007.1362266540527
+    },
+    "policy": {
+      "startup_probe": "run_periodic",
+      "periodic_probe_interval_s": 300.0,
+      "note": "Designed for long-running executor to re-probe periodically."
+    },
+    "prober_prompt": "Evaluate the directory structure for organization and performance."
+  }
+}

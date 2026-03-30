@@ -1,0 +1,8 @@
+Task:
+[[TASK]]
+
+Generate an initial plan and probe strategy for this task.
+Rules:
+1) constraints may include preferred_backend in {mp-spdz, secretflow} and priority in {latency, bandwidth, balanced}.
+2) Provide a practical probe_plan for prober.
+3) If long-running task is implied, set probe_plan.interval_s to a few minutes.

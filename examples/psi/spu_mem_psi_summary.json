@@ -1,0 +1,17 @@
+{
+  "task": "spu_mem_psi",
+  "intersection_ids": [
+    "u2",
+    "u3"
+  ],
+  "alice_rows": 2,
+  "bob_rows": 2,
+  "reports": {
+    "bob": "<spu.libpsi.PsiExecuteReport object at 0x7f5210c5b270>",
+    "alice": "<spu.libpsi.PsiExecuteReport object at 0x7f52227281f0>"
+  },
+  "outputs": {
+    "alice": "examples/psi/alice_mem_psi.csv",
+    "bob": "examples/psi/bob_mem_psi.csv"
+  }
+}
