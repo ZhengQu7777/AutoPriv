@@ -26,6 +26,7 @@ class AutoConfigPipeline:
         self.critic = CriticAgent(settings=self.settings)
         self.executor = ExecutorAgent(settings=self.settings)
 
+#这两个函数一模一样
     def run(self, instruction: str) -> dict[str, Any]:
         return self._run_core(instruction=instruction)
 
@@ -76,6 +77,7 @@ class AutoConfigPipeline:
                     periodic_interval_s=self.settings.probe_interval_s,
                     blackboard=board,
                 )
+                #这里拿到的是最新结果，是否考虑拿到的是平均结果？
                 probe_out = probe_report.samples[-1]
                 state["has_probe"] = True
                 anomaly = _probe_anomaly(probe_report)

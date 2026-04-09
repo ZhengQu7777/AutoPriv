@@ -61,6 +61,7 @@ class ProberAgent(Agent):
             )
         return report
 
+#当前kwargs没有传入，每次探测返回的都是写死的属性。
     def run_once(self, **kwargs: Any) -> ProbeOutput:
         data = self.tools.call("network_probe")
         return ProbeOutput(
