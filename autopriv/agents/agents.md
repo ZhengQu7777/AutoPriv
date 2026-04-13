@@ -2,7 +2,7 @@
 
 ## 1. 模块定位
 
-`autopriv/agents/` 是项目中最接近“角色协作”的一层。这里定义了每个 agent 负责的事情，以及它们如何把输入转换成结构化输出。
+`autopriv/agents/` 是项目中最接近"角色协作"的一层。这里定义了每个 agent 负责的事情，以及它们如何把输入转换成结构化输出。
 
 当前目录包含 5 个核心 agent：
 
@@ -19,7 +19,7 @@
 - `base.py`
   定义 agent 的公共抽象基类。
 - `planner.py`
-  理解任务，生成初始计划，并在流程运行中决定下一步动作。
+  理解用户任务，生成初始计划和探测策略，不参与流程调度。
 - `prober.py`
   收集网络和主机资源信息，生成探测报告。
 - `configer.py`
@@ -40,22 +40,20 @@
 
 它还内置了一个 `ToolRegistry`，方便 agent 注册和调用本地工具。
 
-这意味着项目里的 agent 不是“完全自由的脚本”，而是被统一纳入同一种调用风格。
+这意味着项目里的 agent 不是"完全自由的脚本"，而是被统一纳入同一种调用风格。
 
 ## 4. `PlannerAgent`
 
 ### 4.1 作用
 
-`PlannerAgent` 是流程起点。它要先把用户任务翻译成机器可执行的计划，然后在运行过程中持续判断下一步该轮到谁。
+`PlannerAgent` 是流程起点。它只负责理解用户任务，产出结构化的规划结果，不参与流程调度。流程的控制权完全由 `pipeline` 持有。
 
 ### 4.2 关键方法
 
 - `run(instruction, blackboard=None)`
   调用 `_run_llm()`，产出 `PlannerOutput`，并把探测计划写到黑板上。
-- `decide_next(instruction, state, observation=None, blackboard=None)`
-  根据当前状态、最近观察和通信轨迹，让 LLM 选择下一步 agent。
 - `_run_llm(instruction)`
-  读取 `planner_system.txt` 和 `planner_user.txt`，向模型请求结构化规划结果。
+  使用 `__init__` 中预加载的 `planner_system.txt` 和 `planner_user.txt`，向模型请求结构化规划结果。
 
 ### 4.3 生成的核心信息
 
@@ -63,15 +61,20 @@
   任务目标列表。
 - `constraints`
   约束条件，例如偏好的后端或任务优先级。
+- `requires_probe`
+  是否需要进行环境探测，简单任务可跳过。
+- `request_execute`
+  是否需要进入实际执行，只有用户明确要求时为 `True`。
 - `probe_plan`
   给 `ProberAgent` 的探测计划，包括采样次数、探测间隔、指标和提示文本。
 
 ### 4.4 容错逻辑
 
-`planner.py` 做了两层兜底：
+`planner.py` 做了多层兜底：
 
 - `_parse_probe_plan()` 会修正无效的 `metrics`、`sample_count`、`interval_s` 和 `tool_args`
-- `_parse_action()` 会限制下一步只能是 `prober`、`configer`、`critic`、`executor` 或 `stop`
+- `_parse_requires_probe()` 和 `_parse_request_execute()` 在 LLM 未返回有效布尔值时，会根据用户指令关键词做回退判断
+- `_coerce_bool()` 统一处理各种布尔值表示
 
 这可以减少 LLM 输出不规范导致的流程失控。
 
@@ -103,7 +106,7 @@
 - `sample_count` 最多 3 次
 - `interval_s` 最多 2 秒
 
-这样做的目的不是“完全听从 planner”，而是保证启动阶段足够快，不被长探测拖住。
+这样做的目的不是"完全听从 planner"，而是保证启动阶段足够快，不被长探测拖住。
 
 ### 5.5 汇总逻辑
 
@@ -122,7 +125,7 @@
 
 ### 6.1 作用
 
-`ConfigerAgent` 是项目里最核心的“融合器”。它不只是简单拼接输入，而是分层决定配置。
+`ConfigerAgent` 是项目里最核心的"融合器"。它不只是简单拼接输入，而是分层决定配置。
 
 ### 6.2 输入来源
 
@@ -174,13 +177,13 @@
 - 当前 LLM 配置
 - 通信轨迹
 
-这部分不是最终给执行器的最小配置，而是“解释这份配置从哪里来”的上下文。
+这部分不是最终给执行器的最小配置，而是"解释这份配置从哪里来"的上下文。
 
 ## 7. `CriticAgent`
 
 ### 7.1 作用
 
-`CriticAgent` 是执行前的审查员。它要回答的不是“如何生成配置”，而是“这个配置现在能不能放行”。
+`CriticAgent` 是执行前的审查员。它要回答的不是"如何生成配置"，而是"这个配置现在能不能放行"。
 
 ### 7.2 两类检查
 
@@ -202,13 +205,14 @@
 
 `CriticOutput` 会包含：
 
-- `approved`
-- `risk_level`
-- `issues`
-- `recommendations`
-- `next_agent`
+- `approved`：是否批准当前配置
+- `decision`：结构化决策（`approve` / `re_probe` / `re_config` / `reject`）
+- `risk_level`：风险等级（`low` / `medium` / `high`）
+- `issues`：发现的问题列表
+- `recommendations`：改进建议列表
+- `next_agent`：下一步应该由谁处理（`executor` / `prober` / `configer` / `stop`）
 
-如果静态检查发现问题，它会强制把 `approved` 改成 `False`，并在原本要进入 `executor` 时改派到 `configer` 或 `prober`。
+`pipeline` 根据 `approved`、`decision` 和 `next_agent` 这些结构化字段来决定回退方向，而不是通过自然语言理解。如果静态检查发现问题，它会强制把 `approved` 改成 `False`，并在原本要进入 `executor` 时改派到 `configer` 或 `prober`。
 
 ## 8. `ExecutorAgent`
 
@@ -236,35 +240,34 @@
 
 ### 8.4 当前边界
 
-这个 agent 目前更像“执行接口占位符”，还不是成熟的多后端执行框架。
+这个 agent 目前更像"执行接口占位符"，还不是成熟的多后端执行框架。
 
-另外要注意一件事：从当前 `pipeline.py` 的默认逻辑看，流程通常会在 `critic` 审查通过后直接结束，因此 `executor` 虽然已经实现并接入了分发接口，但默认主链路里通常不会自动走到这里。
+只有当用户指令中明确要求执行（`request_execute=True`）且 `critic` 审查通过时，`pipeline` 才会调用 `executor`。
 
 ## 9. 各 agent 的协作关系
 
-设计上的理想顺序是：
+当前的协作由 `pipeline` 以固定阶段式编排驱动：
 
-1. `planner` 产出规划
-2. `prober` 收集环境
+1. `planner` 产出规划（理解任务、判断是否需要探测和执行）
+2. `prober` 收集环境（由 `pipeline` 根据 `requires_probe` 决定是否执行）
 3. `configer` 生成配置
 4. `critic` 审查方案
-5. `executor` 在通过时执行
+5. 若 `critic` 不通过，`pipeline` 根据 `next_agent` 回退到 `configer` 或 `prober`
+6. 若 `critic` 通过且 `request_execute=True`，才进入 `executor`
 
-但实际流程不完全写死，因为 `planner.decide_next()` 会根据状态和观察动态选下一步。
-
-同时，按当前 `pipeline` 实现，若 `critic` 已批准，主循环会提前结束，所以“设计顺序”与“默认实际执行顺序”并不完全相同。
+流程的回退和分支完全由 `pipeline` 中的代码逻辑控制，不依赖 LLM 做调度决策。
 
 ## 10. 当前实现的优点与限制
 
 优点：
 
-- 每个 agent 的职责划分相对清楚
+- 每个 agent 的职责划分清楚，planner 只管理解任务，不参与调度
 - 有统一输入输出结构，便于接线
-- 已具备“规则 + LLM + 编排”三者结合的雏形
+- 已具备"规则 + LLM + 编排"三者结合的雏形
+- 主流程由代码状态机控制，可审计、可预测
 
 限制：
 
-- planner 对流程走向有较大影响，LLM 输出质量会直接影响链路稳定性
 - configer 和 critic 都依赖 LLM，可解释性和稳定性仍需加强
 - executor 仍然偏轻量，尚未真正实现多后端抽象
-- 默认 pipeline 在 `critic` 通过后就收尾，导致 executor 更像预留能力而非稳定进入的常规步骤
+- prober 内部的探测参数透传和采样策略细分属于后续任务

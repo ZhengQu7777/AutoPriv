@@ -3,6 +3,9 @@ Return JSON only.
 Required top-level keys:
 - goals: list[str]
 - constraints: object
+- requires_probe: boolean
+- request_execute: boolean
+- planning_notes: list[str]
 - probe_plan: object
 
 Probe plan schema:
@@ -12,5 +15,10 @@ Probe plan schema:
 - interval_s: number
 - tool_args: object
 - prober_prompt: string
+
+Rules:
+- request_execute is true only when the user explicitly asks to execute or run a backend task.
+- requires_probe is false only when a simple recommendation can be made without runtime environment sensing.
+- planning_notes should be short machine-readable hints for pipeline and reports.
 
 Use concise fields and machine-readable values.

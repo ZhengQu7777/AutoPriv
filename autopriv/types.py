@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,18 +25,13 @@ class ProbePlan:
 
 
 @dataclass(slots=True)
-class PlannerAction:
-    agent: str
-    purpose: str = ""
-    done: bool = False
-    updates: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
 class PlannerOutput:
     instruction: str
     goals: list[str] = field(default_factory=list)
     constraints: dict[str, Any] = field(default_factory=dict)
+    requires_probe: bool = True
+    request_execute: bool = False
+    planning_notes: list[str] = field(default_factory=list)
     probe_plan: ProbePlan = field(default_factory=ProbePlan)
     planner_prompt: dict[str, str] = field(default_factory=dict)
 
@@ -104,6 +99,7 @@ class ConfigOutput:
 @dataclass(slots=True)
 class CriticOutput:
     approved: bool
+    decision: str = "reject"
     risk_level: str = "medium"
     issues: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
@@ -112,6 +108,7 @@ class CriticOutput:
     def to_dict(self) -> dict[str, Any]:
         return {
             "approved": self.approved,
+            "decision": self.decision,
             "risk_level": self.risk_level,
             "issues": self.issues,
             "recommendations": self.recommendations,
@@ -133,3 +130,32 @@ class ExecutorOutput:
             "message": self.message,
             "details": self.details,
         }
+
+
+@dataclass(slots=True)
+class RunState:
+    phase: str = "planning"
+    status: str = "running"
+    requires_probe: bool = True
+    request_execute: bool = False
+    probe_attempts: int = 0
+    config_attempts: int = 0
+    critic_attempts: int = 0
+    critic_approved: bool = False
+    executed: bool = False
+    last_decision: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class RunContext:
+    instruction: str
+    planner: PlannerOutput | None = None
+    probe: ProbeOutput | None = None
+    probe_report: ProbeReport | None = None
+    config: ConfigOutput | None = None
+    critic: CriticOutput | None = None
+    executor: ExecutorOutput | None = None
+    state: RunState = field(default_factory=RunState)

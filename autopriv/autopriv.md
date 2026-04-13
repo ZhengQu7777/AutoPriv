@@ -39,12 +39,13 @@
 项目一次运行时，核心数据通常按下面顺序流动：
 
 1. `main.py` 接收用户任务并创建 `AutoConfigPipeline`
-2. `PlannerAgent` 把任务转成 `PlannerOutput`
-3. `ProberAgent` 根据 `probe_plan` 产出 `ProbeReport`
+2. `PlannerAgent` 把任务转成 `PlannerOutput`（含 `requires_probe` 和 `request_execute` 判断）
+3. 如果需要探测，`ProberAgent` 根据 `probe_plan` 产出 `ProbeReport`
 4. `ConfigerAgent` 结合规划结果、探测结果、知识库和 LLM 生成 `ConfigOutput`
-5. `CriticAgent` 对候选配置做审查，产出 `CriticOutput`
-6. 设计上在审查通过后可进入 `ExecutorAgent` 尝试执行实际后端任务，但按当前默认 `pipeline` 实现，流程通常会在 `critic` 审查通过后先结束
-7. `pipeline` 将全量结果、可读报告和消息轨迹写入输出目录
+5. `CriticAgent` 对候选配置做审查，产出 `CriticOutput`（含结构化决策）
+6. 如果 critic 不通过，pipeline 根据 `next_agent` 回退到 configer 或 prober
+7. 只有 critic 通过且 `request_execute=True` 时，才进入 `ExecutorAgent`
+8. `pipeline` 将全量结果、可读报告和消息轨迹写入输出目录
 
 ## 4. `types.py` 在项目中的地位
 
@@ -56,10 +57,8 @@
   黑板里的单条通信消息，记录发送方、接收方、消息类型和内容。
 - `ProbePlan`
   planner 给 prober 的探测计划，包含采样次数、间隔、指标和工具参数。
-- `PlannerAction`
-  planner 每轮决策后的下一步动作。
 - `PlannerOutput`
-  任务理解后的结构化结果，包含目标、约束和探测计划。
+  任务理解后的结构化结果，包含目标、约束、是否需要探测（`requires_probe`）、是否请求执行（`request_execute`）和探测计划。
 - `ProbeOutput`
   单次探测样本。
 - `ProbeReport`
@@ -67,9 +66,13 @@
 - `ConfigOutput`
   最终配置建议，包含 `backend`、`mode`、`parallelism`、`profile` 等字段。
 - `CriticOutput`
-  审查结果，回答是否批准、风险等级、问题和下游建议。
+  审查结果，包含 `approved`、`decision`（approve/re_probe/re_config/reject）、`risk_level`、`issues`、`recommendations` 和 `next_agent`。pipeline 依据这些结构化字段决定回退方向。
 - `ExecutorOutput`
   执行阶段结果，说明执行状态、消息和附加细节。
+- `RunState`
+  pipeline 维护的流程状态，记录当前阶段、探测次数、配置次数、审查次数、是否通过审查和是否已执行。
+- `RunContext`
+  一次运行的统一上下文，收拢 planner/probe/probe_report/config/critic/executor 的输出以及 `RunState`。pipeline 全程通过 `RunContext` 传递和维护流程状态，不再维护多套独立的状态变量。
 
 这些类型的价值在于：即使每个 agent 内部策略会变化，模块之间的数据接口仍能保持稳定。
 
@@ -97,13 +100,15 @@
 
 ## 6. 对外暴露方式
 
-`autopriv/__init__.py` 当前只导出：
+`autopriv/__init__.py` 当前导出：
 
 - `PlannerOutput`
 - `ProbeOutput`
 - `ConfigOutput`
+- `RunContext`
+- `RunState`
 
-这说明核心包的公开接口还很轻，更多能力仍通过内部目录直接引用。
+导出了核心数据类型和流程状态类型，供外部模块使用。
 
 ## 7. 当前实现特点
 

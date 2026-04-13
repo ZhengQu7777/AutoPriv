@@ -6,3 +6,6 @@ Rules:
 1) constraints may include preferred_backend in {mp-spdz, secretflow} and priority in {latency, bandwidth, balanced}.
 2) Provide a practical probe_plan for prober.
 3) If long-running task is implied, set probe_plan.interval_s to a few minutes.
+4) Set request_execute=true only if the user clearly wants actual execution instead of only a recommendation.
+5) Set requires_probe=false only for simple recommendation tasks where runtime sensing is unnecessary.
+6) Add short planning_notes to explain why probing or execution is needed or skipped.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,21 @@ from autopriv.agents.prober import ProberAgent
 from autopriv.llm import LLMClient
 from autopriv.orchestration.blackboard import Blackboard
 from autopriv.settings import AppSettings, load_settings
-from autopriv.types import ConfigOutput, CriticOutput, ExecutorOutput, PlannerOutput, ProbeOutput, ProbeReport
+from autopriv.types import (
+    ConfigOutput,
+    CriticOutput,
+    ExecutorOutput,
+    PlannerOutput,
+    ProbeOutput,
+    ProbeReport,
+    RunContext,
+    RunState,
+)
+
+logger = logging.getLogger(__name__)
+
+MAX_PROBE_RETRIES = 2
+MAX_CONFIG_REVIEW_CYCLES = 3
 
 
 class AutoConfigPipeline:
@@ -26,165 +41,125 @@ class AutoConfigPipeline:
         self.critic = CriticAgent(settings=self.settings)
         self.executor = ExecutorAgent(settings=self.settings)
 
-#这两个函数一模一样
     def run(self, instruction: str) -> dict[str, Any]:
         return self._run_core(instruction=instruction)
 
-    def run_with_probe_policy(self, instruction: str) -> dict[str, Any]:
-        return self._run_core(instruction=instruction)
-
+    # ── phase‑based pipeline ─────────────────────────────────────
     def _run_core(self, instruction: str) -> dict[str, Any]:
         board = Blackboard()
-        planner_out = self.planner.run(instruction=instruction, blackboard=board)
+        ctx = RunContext(instruction=instruction)
 
-        probe_report: ProbeReport | None = None
-        probe_out: ProbeOutput | None = None
-        config_out: ConfigOutput | None = None
-        critic_out: CriticOutput | None = None
-        executor_out: ExecutorOutput | None = None
-        observation: dict[str, Any] = {}
-        action_trace: list[dict[str, Any]] = []
+        self._run_plan_phase(ctx, board)
+        if ctx.state.requires_probe:
+            self._run_probe_phase(ctx, board)
+        self._run_config_review_phase(ctx, board)
+        if ctx.state.request_execute and ctx.state.critic_approved:
+            self._run_executor_phase(ctx, board)
 
-        state = {
-            "has_probe": False,
-            "has_config": False,
-            "has_critic": False,
-            "critic_approved": False,
-            "has_executor": False,
-            "replan_count": 0,
-        }
+        ctx.state.status = "done"
+        return self._build_result(ctx, board)
 
-        max_steps = 8
-        for _ in range(max_steps):
-            action = self.planner.decide_next(
-                instruction=instruction,
-                state=state,
-                observation=observation,
-                blackboard=board,
-            )
-            action_trace.append(asdict(action))
+    # ── plan phase ───────────────────────────────────────────────
+    def _run_plan_phase(self, ctx: RunContext, board: Blackboard) -> None:
+        ctx.state.phase = "planning"
+        planner_out = self.planner.run(instruction=ctx.instruction, blackboard=board)
+        ctx.planner = planner_out
+        ctx.state.requires_probe = planner_out.requires_probe
+        ctx.state.request_execute = planner_out.request_execute
+        logger.info("plan_phase done: requires_probe=%s request_execute=%s",
+                     ctx.state.requires_probe, ctx.state.request_execute)
 
-            # Allow planner to adjust probe strategy incrementally.
-            if action.updates:
-                self._apply_planner_updates(planner_out, action.updates)
-
-            if action.done or action.agent == "stop":
-                break
-
-            if action.agent == "prober":
-                probe_report = self.prober.run_startup_snapshot(
-                    planner=planner_out,
-                    periodic_interval_s=self.settings.probe_interval_s,
-                    blackboard=board,
-                )
-                #这里拿到的是最新结果，是否考虑拿到的是平均结果？
-                probe_out = probe_report.samples[-1]
-                state["has_probe"] = True
-                anomaly = _probe_anomaly(probe_report)
-                observation = {
-                    "from": "prober",
-                    "anomaly_detected": anomaly,
-                    "probe_summary": probe_report.summary,
-                }
-                if anomaly:
-                    state["replan_count"] = int(state["replan_count"]) + 1
-                continue
-
-            if action.agent == "configer":
-                if probe_out is None:
-                    observation = {"from": "pipeline", "error": "missing_probe_before_config"}
-                    continue
-                config_out = self.configer.run(planner=planner_out, probe=probe_out, blackboard=board)
-                state["has_config"] = True
-                observation = {
-                    "from": "configer",
-                    "backend": config_out.backend,
-                    "mode": config_out.mode,
-                    "profile": config_out.profile,
-                }
-                continue
-
-            if action.agent == "critic":
-                if config_out is None or probe_report is None:
-                    observation = {"from": "pipeline", "error": "missing_config_or_probe_before_critic"}
-                    continue
-                critic_out = self.critic.run(
-                    planner=planner_out,
-                    probe_report=probe_report,
-                    config=config_out,
-                    blackboard=board,
-                )
-                state["has_critic"] = True
-                state["critic_approved"] = critic_out.approved
-                observation = {
-                    "from": "critic",
-                    "approved": critic_out.approved,
-                    "risk_level": critic_out.risk_level,
-                    "issues": critic_out.issues,
-                    "next_agent": critic_out.next_agent,
-                }
-                if critic_out.approved:
-                    break
-                continue
-
-            if action.agent == "executor":
-                if config_out is None:
-                    observation = {"from": "pipeline", "error": "missing_config_before_executor"}
-                    continue
-                if critic_out is None or not critic_out.approved:
-                    observation = {"from": "pipeline", "error": "critic_not_approved"}
-                    continue
-                executor_out = self.executor.run(config=config_out, blackboard=board)
-                state["has_executor"] = True
-                observation = {
-                    "from": "executor",
-                    "status": executor_out.status,
-                    "backend": executor_out.backend,
-                    "message": executor_out.message,
-                }
-                break
-                continue
-
-            observation = {"from": "pipeline", "warning": f"unknown agent: {action.agent}"}
-
-        # Safety fallback to ensure outputs exist.
-        if probe_report is None:
-            probe_report = self.prober.run_startup_snapshot(
-                planner=planner_out,
+    # ── probe phase ──────────────────────────────────────────────
+    def _run_probe_phase(self, ctx: RunContext, board: Blackboard) -> None:
+        ctx.state.phase = "probing"
+        assert ctx.planner is not None
+        for attempt in range(1, MAX_PROBE_RETRIES + 1):
+            ctx.state.probe_attempts = attempt
+            report = self.prober.run_startup_snapshot(
+                planner=ctx.planner,
                 periodic_interval_s=self.settings.probe_interval_s,
                 blackboard=board,
             )
-            probe_out = probe_report.samples[-1]
-            state["has_probe"] = True
+            ctx.probe_report = report
+            ctx.probe = report.samples[-1] if report.samples else None
+            if not _probe_anomaly(report):
+                logger.info("probe_phase ok at attempt %d", attempt)
+                return
+            logger.warning("probe_phase anomaly at attempt %d", attempt)
+        logger.warning("probe_phase: proceeding despite anomaly after %d attempts", MAX_PROBE_RETRIES)
 
-        if config_out is None:
-            assert probe_out is not None
-            config_out = self.configer.run(planner=planner_out, probe=probe_out, blackboard=board)
-            state["has_config"] = True
+    # ── config + review cycle ────────────────────────────────────
+    def _run_config_review_phase(self, ctx: RunContext, board: Blackboard) -> None:
+        assert ctx.planner is not None
+        if ctx.probe is None and ctx.state.requires_probe:
+            self._run_probe_phase(ctx, board)
 
-        if critic_out is None:
-            critic_out = self.critic.run(
-                planner=planner_out,
-                probe_report=probe_report,
-                config=config_out,
+        for cycle in range(1, MAX_CONFIG_REVIEW_CYCLES + 1):
+            ctx.state.phase = "configuring"
+            ctx.state.config_attempts = cycle
+            assert ctx.probe is not None or not ctx.state.requires_probe
+            probe_for_config = ctx.probe
+            if probe_for_config is None:
+                probe_for_config = ProbeOutput()
+            ctx.config = self.configer.run(
+                planner=ctx.planner, probe=probe_for_config, blackboard=board,
+            )
+
+            ctx.state.phase = "reviewing"
+            ctx.state.critic_attempts += 1
+            assert ctx.probe_report is not None or not ctx.state.requires_probe
+            probe_report_for_critic = ctx.probe_report
+            if probe_report_for_critic is None:
+                probe_report_for_critic = ProbeReport(sample_count=0, interval_s=0.0)
+            ctx.critic = self.critic.run(
+                planner=ctx.planner,
+                probe_report=probe_report_for_critic,
+                config=ctx.config,
                 blackboard=board,
             )
-            state["has_critic"] = True
-            state["critic_approved"] = critic_out.approved
 
-        assert probe_out is not None
+            decision = ctx.critic.decision
+            ctx.state.last_decision = decision
+            ctx.state.critic_approved = ctx.critic.approved
+
+            if decision == "approve":
+                logger.info("config_review_phase approved at cycle %d", cycle)
+                return
+            if decision == "re_probe":
+                logger.info("config_review_phase: critic requested re_probe at cycle %d", cycle)
+                self._run_probe_phase(ctx, board)
+                continue
+            if decision == "re_config":
+                logger.info("config_review_phase: critic requested re_config at cycle %d", cycle)
+                continue
+            logger.warning("config_review_phase: critic rejected at cycle %d", cycle)
+            return
+
+        logger.warning("config_review_phase: max cycles reached, using last result")
+
+    # ── executor phase ───────────────────────────────────────────
+    def _run_executor_phase(self, ctx: RunContext, board: Blackboard) -> None:
+        ctx.state.phase = "executing"
+        assert ctx.config is not None
+        ctx.executor = self.executor.run(config=ctx.config, blackboard=board)
+        ctx.state.executed = True
+        logger.info("executor_phase done: status=%s", ctx.executor.status)
+
+    # ── build final result dict ──────────────────────────────────
+    @staticmethod
+    def _build_result(ctx: RunContext, board: Blackboard) -> dict[str, Any]:
         return {
-            "planner": asdict(planner_out),
-            "prober": asdict(probe_out),
-            "probe_report": probe_report.to_dict(),
-            "config": config_out.to_dict(),
-            "critic": critic_out.to_dict(),
-            "executor": executor_out.to_dict() if executor_out is not None else None,
-            "state": state,
-            "actions": action_trace,
+            "planner": asdict(ctx.planner) if ctx.planner else {},
+            "prober": asdict(ctx.probe) if ctx.probe else {},
+            "probe_report": ctx.probe_report.to_dict() if ctx.probe_report else {},
+            "config": ctx.config.to_dict() if ctx.config else {},
+            "critic": ctx.critic.to_dict() if ctx.critic else {},
+            "executor": ctx.executor.to_dict() if ctx.executor else None,
+            "state": ctx.state.to_dict(),
             "messages": board.to_dict(),
         }
 
+    # ── run and save ─────────────────────────────────────────────
     def run_and_save(
         self,
         instruction: str,
@@ -192,7 +167,7 @@ class AutoConfigPipeline:
         report_path: str | Path | None = None,
         config_path: str | Path | None = None,
     ) -> dict[str, Any]:
-        data = self.run_with_probe_policy(instruction=instruction)
+        data = self.run(instruction=instruction)
         out = Path(out_path)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -263,7 +238,6 @@ class AutoConfigPipeline:
         critic = data.get("critic", {})
         executor = data.get("executor", {}) or {}
         state = data.get("state", {})
-        actions = data.get("actions", [])
 
         texts = {
             planner_dir / "planner_output.txt": "\n".join(
@@ -272,6 +246,8 @@ class AutoConfigPipeline:
                     f"instruction: {planner.get('instruction')}",
                     f"goals: {planner.get('goals')}",
                     f"constraints: {planner.get('constraints')}",
+                    f"requires_probe: {planner.get('requires_probe')}",
+                    f"request_execute: {planner.get('request_execute')}",
                     f"probe_plan: {planner.get('probe_plan')}",
                 ]
             ),
@@ -298,6 +274,7 @@ class AutoConfigPipeline:
                 [
                     "[Critic]",
                     f"approved: {critic.get('approved')}",
+                    f"decision: {critic.get('decision')}",
                     f"risk_level: {critic.get('risk_level')}",
                     f"issues: {critic.get('issues')}",
                     f"recommendations: {critic.get('recommendations')}",
@@ -317,36 +294,16 @@ class AutoConfigPipeline:
                 [
                     "[Overall]",
                     f"state: {state}",
-                    f"action_count: {len(actions)}",
                     f"final_backend: {config.get('backend')}",
                     f"final_mode: {config.get('mode')}",
                     f"final_profile: {config.get('profile')}",
                     f"critic_approved: {critic.get('approved')}",
+                    f"critic_decision: {critic.get('decision')}",
                 ]
             ),
         }
         for path, content in texts.items():
             path.write_text(content + "\n", encoding="utf-8")
-
-    @staticmethod
-    def _apply_planner_updates(planner_out: PlannerOutput, updates: dict[str, Any]) -> None:
-        probe_updates = updates.get("probe_plan", updates)
-        if not isinstance(probe_updates, dict):
-            return
-
-        if "sample_count" in probe_updates:
-            try:
-                planner_out.probe_plan.sample_count = max(int(probe_updates["sample_count"]), 1)
-            except (TypeError, ValueError):
-                pass
-        if "interval_s" in probe_updates:
-            try:
-                planner_out.probe_plan.interval_s = max(float(probe_updates["interval_s"]), 0.0)
-            except (TypeError, ValueError):
-                pass
-        if "prober_prompt" in probe_updates and isinstance(probe_updates["prober_prompt"], str):
-            planner_out.probe_plan.prober_prompt = probe_updates["prober_prompt"]
-
 
 
 def _probe_anomaly(report: ProbeReport) -> bool:

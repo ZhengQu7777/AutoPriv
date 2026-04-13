@@ -4,4 +4,5 @@ probe_report: [[PROBE_REPORT_JSON]]
 config: [[CONFIG_JSON]]
 comm_trace: [[COMM_TRACE_JSON]]
 
-Provide static risk-focused review and a next action.
+Provide static risk-focused review and a structured decision.
+Set decision to "approve" if config is safe, "re_config" if it needs adjustment, "re_probe" if more sensing is needed, "reject" if the request is fundamentally invalid.

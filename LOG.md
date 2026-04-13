@@ -30,3 +30,13 @@
 - 用户：说明自己已重新精简 `docs/改进计划.md` 中的主要问题，希望我重新审视当前代码，判断这些问题是否合理，并补全文档后续部分，给出更明确的修改思路与粗粒度代码改动建议，只允许修改 `docs/` 与 `LOG.md`。
 - 回答：重新核对了当前的 `planner`、`pipeline`、`types`、`prober`、`critic`、`blackboard` 和现有文档，确认保留下来的问题总体合理，但将重点重新排序为“控制流归属、结果语义、状态模型收敛”三类主问题，同时把“prompt 重复读取”降为次要伴随问题；随后补全了 `docs/改进计划.md` 的后续部分，明确建议由 `pipeline` 收回默认控制权，增加统一 `RunContext`，拆分 `prober` 的探测语义，增强 `CriticOutput` 的结构化决策能力，并按文件给出 `types.py`、`planner.py`、`pipeline.py`、`prober.py`、`configer.py`、`critic.py`、`blackboard.py` 的粗粒度改动建议与推荐实施顺序。
 - 改动文件：`docs/改进计划.md`、`LOG.md`
+
+- （2026-04-13 上午 Asia/Shanghai）
+- 用户：要求根据 `docs/plan.md` 中的代码更改计划进行检查和修正（该轮修改后因误操作被全部撤销）。
+- 回答：检查并更新了文档文件，但代码修改结果未保留。
+
+- （2026-04-13 下午 Asia/Shanghai）
+- 用户：说明之前的代码更改全部被撤销，要求重新根据新的 `docs/plan.md` 执行代码修改。plan 中有两个核心任务：1. 分离 planner 职责与 pipeline 职责，将控制能力放在 pipeline 中；2. 精简上下文与状态的类，用 `RunContext` + `RunState` 替代多套状态。
+- 回答：从零开始重新执行了全部代码修改。具体包括：`types.py` 新增 `RunContext`/`RunState` 并增强 `CriticOutput`（加 `decision` 字段），移除了 `PlannerAction`；`planner.py` 移除了 `decide_next()`，新增 `requires_probe`/`request_execute` 输出字段，改为 `__init__` 中预加载 prompt；删除了 `planner_decide_system.txt` 和 `planner_decide_user.txt`，更新了 `planner_system.txt`/`planner_user.txt`/`critic_system.txt`/`critic_user.txt`；`critic.py` 新增了 `decision` 字段解析逻辑；`pipeline.py` 完全重写为阶段式编排（`_run_plan_phase`/`_run_probe_phase`/`_run_config_review_phase`/`_run_executor_phase`），删除了 `run_with_probe_policy`/`_apply_planner_updates`/`observation`/`action_trace` 等旧概念；`__init__.py` 更新导出列表。同步更新了所有模块 md 文件和 `docs/` 中的文档。补全了 `plan.md` 的"更改后运行逻辑"和"更改后运行命令"部分。
+- 改动文件：`autopriv/types.py`、`autopriv/__init__.py`、`autopriv/agents/planner.py`、`autopriv/agents/critic.py`、`autopriv/orchestration/pipeline.py`、`autopriv/prompts/planner_system.txt`、`autopriv/prompts/planner_user.txt`、`autopriv/prompts/critic_system.txt`、`autopriv/prompts/critic_user.txt`、`autopriv/agents/agents.md`、`autopriv/orchestration/orchestration.md`、`autopriv/autopriv.md`、`autopriv/prompts/prompts.md`、`docs/plan.md`、`docs/框架梳理.md`、`LOG.md`
+- 删除文件：`autopriv/prompts/planner_decide_system.txt`、`autopriv/prompts/planner_decide_user.txt`

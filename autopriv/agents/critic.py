@@ -43,6 +43,7 @@ class CriticAgent(Agent):
         out.issues = list(dict.fromkeys(static_issues + out.issues))
         if static_issues:
             out.approved = False
+            out.decision = "reject"
             if out.next_agent == "executor":
                 out.next_agent = static_next
         if blackboard is not None:
@@ -79,6 +80,7 @@ def _parse_output(payload: Any) -> CriticOutput:
     if not isinstance(payload, dict):
         return CriticOutput(
             approved=False,
+            decision="reject",
             risk_level="high",
             issues=["Critic output malformed"],
             recommendations=["Re-run critic with valid JSON output"],
@@ -89,6 +91,10 @@ def _parse_output(payload: Any) -> CriticOutput:
     risk_level = str(payload.get("risk_level", "medium")).strip().lower()
     if risk_level not in {"low", "medium", "high"}:
         risk_level = "medium"
+
+    decision = str(payload.get("decision", "")).strip().lower()
+    if decision not in {"approve", "re_probe", "re_config", "reject"}:
+        decision = "approve" if approved else "reject"
 
     issues = payload.get("issues", [])
     if not isinstance(issues, list):
@@ -102,8 +108,14 @@ def _parse_output(payload: Any) -> CriticOutput:
     if next_agent not in {"executor", "prober", "configer", "stop"}:
         next_agent = "executor"
 
+    if decision == "approve":
+        approved = True
+    elif decision in ("re_probe", "re_config", "reject"):
+        approved = False
+
     return CriticOutput(
         approved=approved,
+        decision=decision,
         risk_level=risk_level,
         issues=[str(x) for x in issues],
         recommendations=[str(x) for x in recs],
