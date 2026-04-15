@@ -4,67 +4,47 @@
 
 ## 更改目的
 
-- 1.`planner` 与`pipeline` 职责的分离，将控制转移给pipeline
-- 2. `blackboard` 、`state` 、`observation`、`action_trace`等用于记录上下文与状态的类太多，需要简化与合并
+- 1.`configer` 生成逻辑更加合理
+- 2. `configer` 可以根据 `critic` 反馈调整输出
 
 ## 更改思路与要求
 
-### 分离`planner` 与`pipeline` 职责
-框架运行应该如下
+### `configer` 生成逻辑更加合理
+生成逻辑应该如下
 ```text
-1. planner.run() -> 得到任务理解与探测计划
-2. prober.run_startup_snapshot() -> 先执行一次标准探测
-3. 如果探测失败或探测异常，则由 pipeline 判断是否重试 prober
-4. configer.run() -> 生成候选配置
-5. critic.run() -> 产出审查结论
-6. 如果 critic 要求重配，则重新进入 configer
-7. 如果 critic 要求重探测，则回到 prober
-8. 如果 critic 通过，则结束配置流程
-9. 只有在用户指令明确需要执行时，才进入 executor
+1. 先用代码规则给出默认值
+2. 再从知识库取命中规则
+3. 再把默认值和规则命中交给 LLM 做细化
 ```
-这样主流程变成“按阶段推进 + 少量回退判断”。
 
-`planner.py` 需要进行收缩。保留 `run()`，移除 `decide_next()`，避免每次调用都重新从磁盘读取 prompt，planner需要能理解用户指令，首先明白这个指令是否需要执行，如果执行则最后要进入executor，接着需要判断是否为简单任务（默认非简单任务），如果判断为简单任务，那么就不需要进行探测。planner最后得到的输出要可以帮助pipeline进行决策。
+当前一些属性，例如并发度只能由代码得到，应该所有属性都再次由LLM去做细化，例如像是LLM refine 之后再拼 notes。思路可以如下：得到的默认值与规则可以作为输出给LLM，_llm_refine在原先的基础上，额外考虑它们，对应的prompt.txt也要随之进行更改。
 
-同时建议处理下面几个现有问题：
-1. 删除用不到prompt的文件，对任务实现相关prompt需要进行检查与修改使其可以完成任务。
+### `configer` 可以根据 `critic` 反馈调整输出
 
-`pipeline.py` 核心流程需要被拆成多个阶段函数像是`_run_plan_phase()`与`_run_probe_phase()`等，将流程进行拆分与控制，每个流程结束后可以得到的output可以帮助pipeline进行决策。
-
-同时建议处理下面几个现有问题：
-1.删除重复的 `run_with_probe_policy()`
-2.不再同时维护 `state`、`observation`、`action_trace`、`blackboard` 四套上下文（这也是另一个主任务）
-
-### 上下文与状态记录
-
-`types.py` 可以新增 `RunContext` 和 `RunState`用于记录pipeline中的上下文与状态，`blackboard` 仅用于 trace 记录，保留原有的名字方便后续扩展。
+`configer` 去做判断，如果有 prev_config + critic_feedback ，需要将其作为 prompt 上下文，让 LLM 做 delta 修正而不是从头生成。该更改需要从pipeline 调用、prompt 模板一同进行更改。
 
 ## 更改门限
 
-本次更改需要聚焦两个主线内容，其他一些例如prober的优化不在本次更改范围内，更改完成后需要补齐文件后的“更改后运行逻辑”与“更改后运行命令”的部分。
+本次更改需要聚焦两个主线内容，其他优化不在本次更改范围内，更改完成后需要补齐文件后的“更改后运行逻辑”与“更改后运行命令”的部分。
 
 ## 更改后运行逻辑
 
-更改后的运行逻辑为**阶段式推进 + 少量回退**，由 `pipeline` 完全控制流程，`planner` 不再参与调度决策：
+configer 的生成流程变为：
 
 ```text
-1. plan_phase：planner.run() → 得到任务理解（goals/constraints）、探测计划（probe_plan）、
-   以及两个关键决策字段 requires_probe 和 request_execute
-2. probe_phase（仅当 requires_probe=true）：prober.run_startup_snapshot() → 执行标准探测，
-   如果探测异常，pipeline 自动重试（最多 2 次）
-3. config_review_phase：
-   3a. configer.run() → 生成候选配置
-   3b. critic.run() → 产出审查结论，包含 decision 字段（approve/re_config/re_probe/reject）
-   3c. 如果 decision=re_config → 回到 3a 重新生成配置
-   3d. 如果 decision=re_probe → 回到 probe_phase 重新探测后再进入 3a
-   3e. 如果 decision=approve → 配置通过
-   3f. 如果 decision=reject → 流程终止
-   （最多循环 3 次）
-4. executor_phase（仅当 request_execute=true 且 critic approved）：executor.run()
+1. 代码规则计算默认值（backend/mode/parallelism/profile）
+2. KB 命中规则覆盖默认值，产出 kb_notes
+3. 将默认值、kb_notes、KB 原始命中一起交给 LLM 做全量细化
+   LLM 返回所有 5 个字段：backend/mode/parallelism/profile/notes
+4. 如果是修订轮次（prev_config + critic_feedback 不为空），
+   LLM 会基于上一轮配置和 critic 反馈做 delta 修正而非从头生成
 ```
 
-状态管理：统一使用 `RunContext`（持有各 agent 输出）和 `RunState`（持有流程状态），
-`Blackboard` 仅用于 trace 记录。
+pipeline 的 config_review 循环中：
+- 第 1 轮：prev_config=None, critic_feedback=None → 首次生成
+- 第 2+ 轮：prev_config=上一轮的 config, critic_feedback=上一轮的 critic → 修订生成
+
+运行主流程不变，仍然是 plan → probe → config+critic 循环 → executor。
 
 ## 更改后运行命令
 
@@ -73,5 +53,3 @@
 ```bash
 conda run -n autopriv python main.py "请自动配置隐私计算任务，优先低延迟"
 ```
-
-可选参数也不变：`--out`、`--config-out`、`--report-out`。

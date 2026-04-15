@@ -106,10 +106,12 @@
 
 这是最核心的循环，最多执行 `MAX_CONFIG_REVIEW_CYCLES`（3）轮：
 
-1. 每轮先调用 `configer.run()` 产出 `ConfigOutput`
+1. 每轮调用 `configer.run()` 产出 `ConfigOutput`
+   - 第 1 轮：`prev_config=None, critic_feedback=None`，首次生成
+   - 第 2+ 轮：`prev_config=上一轮 config, critic_feedback=上一轮 critic`，让 LLM 做 delta 修正
 2. 再调用 `critic.run()` 产出 `CriticOutput`
 3. 如果 `critic.decision="approve"`，结束循环
-4. 如果 `critic.decision="re_config"`，回到步骤 1 重新生成配置
+4. 如果 `critic.decision="re_config"`，回到步骤 1 进行修订
 5. 如果 `critic.decision="re_probe"`，先重新探测再回到步骤 1
 6. 如果 `critic.decision="reject"` 或超过最大循环次数，使用最后一次结果
 

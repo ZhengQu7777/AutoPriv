@@ -4,7 +4,7 @@
 
 `autopriv/prompts/` 存放项目使用的 prompt 模板文本。
 
-这些文件本身不包含 Python 逻辑，但它们会直接影响 `planner`、`configer`、`critic` 的输出格式和行为，因此也是项目的重要“配置代码”。
+这些文件本身不包含 Python 逻辑，但它们会直接影响 `planner`、`configer`、`critic` 的输出格式和行为，因此也是项目的重要"配置代码"。
 
 ## 2. 当前有哪些 prompt
 
@@ -26,7 +26,7 @@
 - 给出 `probe_plan` 的字段结构
 - 说明 `requires_probe` 和 `request_execute` 的判断规则
 
-它决定的是“planner 理解任务时的输出格式”。
+它决定的是"planner 理解任务时的输出格式"。
 
 ## 4. `planner_user.txt`
 
@@ -45,10 +45,10 @@
 作用：
 
 - 告诉模型它是多智能体系统中的 configer
-- 明确只能返回 `backend`、`mode`、`profile`
+- 要求返回所有 5 个字段：`backend`、`mode`、`parallelism`、`profile`、`notes`
 - 限制 `backend` 候选为 `mp-spdz` 或 `secretflow`
-
-它的重点是让模型做“精修”，而不是无限扩展字段。
+- 说明 notes 必须与最终配置一致，不能出现矛盾
+- 说明修订轮次的行为：当 prev_config 和 critic_feedback 存在时，做 delta 修正而非从头生成
 
 ## 6. `configer_user.txt`
 
@@ -56,11 +56,13 @@
 
 - 注入 planner 结果
 - 注入 probe 结果
-- 注入默认配置
+- 注入代码默认值（`DEFAULTS_JSON`）和 KB notes（`KB_NOTES_JSON`）
 - 注入知识库命中
 - 注入通信轨迹
+- 注入上一轮配置（`PREV_CONFIG_JSON`）和 critic 反馈（`CRITIC_FEEDBACK_JSON`）
+- 指导 LLM 在修订轮次时基于 critic 反馈做针对性修正
 
-也就是说，configer 用到的 prompt 上下文相对完整。
+configer 用到的 prompt 上下文是所有 agent 中最完整的。
 
 ## 7. `critic_system.txt`
 
@@ -96,7 +98,7 @@
 - 强调优先采集 RTT、带宽、CPU 和内存
 - 强调低开销和确定性输出
 
-这个 prompt 当前不会直接驱动本地工具执行逻辑，但会被保存到规划与报告中，用于解释“本次探测原本想做什么”。
+这个 prompt 当前不会直接驱动本地工具执行逻辑，但会被保存到规划与报告中，用于解释"本次探测原本想做什么"。
 
 ## 10. 当前设计特点
 

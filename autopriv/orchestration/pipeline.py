@@ -101,8 +101,14 @@ class AutoConfigPipeline:
             probe_for_config = ctx.probe
             if probe_for_config is None:
                 probe_for_config = ProbeOutput()
+            prev_config = ctx.config if cycle > 1 else None
+            critic_feedback = ctx.critic if cycle > 1 else None
             ctx.config = self.configer.run(
-                planner=ctx.planner, probe=probe_for_config, blackboard=board,
+                planner=ctx.planner,
+                probe=probe_for_config,
+                blackboard=board,
+                prev_config=prev_config,
+                critic_feedback=critic_feedback,
             )
 
             ctx.state.phase = "reviewing"

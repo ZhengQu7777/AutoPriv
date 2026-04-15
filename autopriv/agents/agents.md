@@ -132,17 +132,21 @@
 - `PlannerOutput`
 - `ProbeOutput`
 - 专家规则命中结果
-- LLM 二次细化结果
+- LLM 全量细化结果
 - 黑板中的通信轨迹
+- `prev_config`（上一轮配置，修订轮次时提供）
+- `critic_feedback`（上一轮 critic 审查结果，修订轮次时提供）
 
 ### 6.3 生成配置的顺序
 
 它的逻辑是分层推进的：
 
-1. 先用代码规则给出默认值
-2. 再从知识库取命中规则
-3. 再把默认值和规则命中交给 LLM 做细化
-4. 最后拼出 `ConfigOutput`
+1. 先用代码规则给出默认值（backend/mode/parallelism/profile）
+2. 再从知识库取命中规则，覆盖默认值并产出 `kb_notes`
+3. 再把默认值、kb_notes、KB 原始命中、prev_config 和 critic_feedback 一起交给 LLM 做全量细化
+4. LLM 返回所有 5 个字段（backend/mode/parallelism/profile/notes），notes 由 LLM 生成以确保与最终配置一致
+
+如果是修订轮次（prev_config 和 critic_feedback 不为空），LLM 会基于上一轮配置和 critic 反馈做 delta 修正，而不是从头生成。
 
 ### 6.4 代码内置的默认规则
 
@@ -155,16 +159,20 @@
 - `_choose_profile()`
   根据带宽或时延确定 `low_bandwidth`、`high_latency` 或 `balanced`。
 
+这些默认值作为 LLM 的起点，LLM 可以修改所有字段。
+
 ### 6.5 知识库与 LLM 的配合
 
-`_apply_kb_hints()` 会先把规则库命中的推荐值覆盖到默认方案上，并把规则说明写进 `notes`。
+`_apply_kb_hints()` 会先把规则库命中的推荐值覆盖到默认方案上，并产出 `kb_notes` 列表。
 
-随后 `_llm_refine()` 再把 planner、probe、默认值、规则命中和通信轨迹一起送给模型，让模型做最后修正。
+随后 `_llm_refine()` 把 planner、probe、默认值、kb_notes、KB 原始命中、通信轨迹以及 prev_config/critic_feedback 一起送给模型，让模型做全量细化。LLM 负责返回所有配置字段和 notes，确保 notes 与最终配置一致。
 
-不过它对模型结果仍然保留限制：
+对模型结果的保护限制：
 
-- `backend` 只能是 `mp-spdz` 或 `secretflow`
-- `mode` 和 `profile` 为空时会回退默认值
+- `backend` 只能是 `mp-spdz` 或 `secretflow`，无效值回退默认
+- `mode` 和 `profile` 为空时回退默认值
+- `parallelism` 必须为正整数，无效值回退默认
+- `notes` 为空时回退为 kb_notes
 
 ### 6.6 附加信息 `extra`
 

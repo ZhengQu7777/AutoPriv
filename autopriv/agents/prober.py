@@ -27,7 +27,7 @@ class ProberAgent(Agent):
     ) -> ProbeReport:
         plan = planner.probe_plan
         # Keep startup probing responsive even if planner emits aggressive values.
-        sample_count = min(max(plan.sample_count, 1), 3)
+        sample_count = min(max(plan.sample_count, 1), 10)
         interval_s = min(max(plan.interval_s, 0.0), 2.0)
         tool_args = plan.tool_args
 

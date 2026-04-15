@@ -1,8 +1,17 @@
-Refine configuration based on context:
+Produce a refined configuration based on the following context.
+
 planner: [[PLANNER_JSON]]
 probe: [[PROBE_JSON]]
-default_backend: [[DEFAULT_BACKEND]]
-default_mode: [[DEFAULT_MODE]]
-default_profile: [[DEFAULT_PROFILE]]
+code_defaults: [[DEFAULTS_JSON]]
+kb_notes: [[KB_NOTES_JSON]]
 kb_hits: [[KB_HITS_JSON]]
 comm_trace: [[COMM_TRACE_JSON]]
+
+prev_config: [[PREV_CONFIG_JSON]]
+critic_feedback: [[CRITIC_FEEDBACK_JSON]]
+
+Instructions:
+- code_defaults are computed from probe data using simple rules. Use them as a starting baseline.
+- kb_notes are expert hints. Incorporate them but your final notes must not contradict your output.
+- If prev_config is not null, this is a revision. Focus on fixing the issues listed in critic_feedback rather than starting over.
+- Return all five fields: backend, mode, parallelism, profile, notes.

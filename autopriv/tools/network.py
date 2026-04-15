@@ -19,7 +19,7 @@ class NetworkProbeTool(Tool):
         rtt_port: int = 53,
         rtt_trials: int = 3,
         timeout_s: float = 1.5,
-        bandwidth_url: str = "https://speed.hetzner.de/1MB.bin",
+        bandwidth_url: str = "https://speed.cloudflare.com/__down?bytes=1000000",
         max_bytes: int = 1024 * 1024,
     ) -> dict[str, Any]:
         rtt_values = []
