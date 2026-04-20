@@ -226,31 +226,39 @@
 
 ### 8.1 作用
 
-`ExecutorAgent` 是执行预留层。当前实现还不算完整后端适配器，但已经具备最小分发能力。
+`ExecutorAgent` 把上游流水线的结果翻译成可运行的后端工件。它本身不执行代码，而是生成 `.mpc` 与 `.sh` 文件落盘到 `output/` 目录，由用户在装有对应后端的机器上运行。
 
-### 8.2 当前支持情况
+### 8.2 输入
 
-- `secretflow`
-  会尝试执行 `AUTOPRIV_SECRETFLOW_PSI_SCRIPT` 指定的脚本。
+- `config`（configer 最终输出，始终作为输入，critic 未通过时也会兜底生成）
+- `instruction`（用户原始指令，用于判断任务类型 psi/pir 等）
+- `probe`、`probe_report`（给 LLM 看环境参数，帮助选择协议）
+
+### 8.3 生成流程
+
+1. 根据 `config.backend` 查 `BACKEND_GUIDE_FILES` 表定位 backend 专属 prompt
+2. 加载 `executor_system.txt` 作为 system prompt
+3. 用 `executor_user.txt` 渲染 user prompt，注入 `INSTRUCTION`、`CONFIG_JSON`、`PROBE_JSON`、`PROBE_SUMMARY_JSON`、`BACKEND_GUIDE`
+4. 调用 LLM 生成 JSON：`{task_type, mpc_file:{name,content}, sh_file:{name,content}, notes}`
+5. 落盘到 `output/<timestamp>_<backend>_<task_type>/`，生成 `.mpc`、`.sh`、`manifest.json`
+6. `.sh` 文件被 `chmod 755`，用户可直接运行
+
+### 8.4 当前支持的后端
+
 - `mp-spdz`
-  当前只返回 `todo`，说明适配器尚未完成。
+  使用 `executor_mp_spdz.txt` 指导 LLM 生成兼容 MP-SPDZ 语法的 `.mpc` 与调用 `./compile.py` + `./Scripts/<protocol>.sh` 的运行脚本。
+- 其他后端（如 `secretflow`）
+  当前返回 `status=skipped` 并在 `message` 中说明本轮只支持 mp-spdz。
 
-### 8.3 SecretFlow 执行逻辑
+### 8.5 兜底策略
 
-`_run_secretflow()` 会：
+`pipeline` 在 `request_execute=True` 时调用 `executor`，**无论 critic 是否 approve**。执行依据是最后一轮的 `ConfigOutput`。这是 plan 中明确要求的兜底考量：critic 是审查员，executor 是交付员，不让审查阻塞交付。
 
-1. 定位项目根目录
-2. 拼接 SecretFlow 脚本路径
-3. 用 `conda run -n <env> python <script>` 执行
-4. 根据返回码生成 `ExecutorOutput`
+### 8.6 容错
 
-为避免输出过大，它只保留 stdout/stderr 的末尾几行，通过 `_tail()` 截断。
-
-### 8.4 当前边界
-
-这个 agent 目前更像"执行接口占位符"，还不是成熟的多后端执行框架。
-
-只有当用户指令中明确要求执行（`request_execute=True`）且 `critic` 审查通过时，`pipeline` 才会调用 `executor`。
+- LLM 返回非法 JSON 或异常：executor 返回 `status=error`，不抛出
+- `task_type` 非法字符会被规范化；文件名扩展名会被强制修正
+- `mpc_file`/`sh_file` 字段缺失时会填充占位注释
 
 ## 9. 各 agent 的协作关系
 
@@ -261,7 +269,7 @@
 3. `configer` 生成配置
 4. `critic` 审查方案
 5. 若 `critic` 不通过，`pipeline` 根据 `next_agent` 回退到 `configer` 或 `prober`
-6. 若 `critic` 通过且 `request_execute=True`，才进入 `executor`
+6. 若 `request_execute=True`，`pipeline` 调用 `executor` 生成运行工件（critic 未通过时也会兜底执行）
 
 流程的回退和分支完全由 `pipeline` 中的代码逻辑控制，不依赖 LLM 做调度决策。
 

@@ -15,6 +15,9 @@
 - `critic_system.txt`
 - `critic_user.txt`
 - `prober_default.txt`
+- `executor_system.txt`
+- `executor_user.txt`
+- `executor_mp_spdz.txt`
 
 ## 3. `planner_system.txt`
 
@@ -100,16 +103,52 @@ configer 用到的 prompt 上下文是所有 agent 中最完整的。
 
 这个 prompt 当前不会直接驱动本地工具执行逻辑，但会被保存到规划与报告中，用于解释"本次探测原本想做什么"。
 
-## 10. 当前设计特点
+## 10. `executor_system.txt`
+
+作用：
+
+- 告诉模型它是 executor，只负责生成可运行工件，不执行代码
+- 明确三步流程：识别任务类型（psi/pir/...）→ 阅读后端 guide → 生成 JSON
+- 规定输出必须包含 `task_type`、`mpc_file{name,content}`、`sh_file{name,content}`、`notes`
+- 限制 sh 文件必须以 `#!/usr/bin/env bash` 起始并 `set -e`
+- 要求尊重 configer 输出的 backend/mode/profile/parallelism
+
+## 11. `executor_user.txt`
+
+作用：
+
+- 注入用户原始指令 `INSTRUCTION`
+- 注入最终 `CONFIG_JSON`
+- 注入最新探测 `PROBE_JSON` 与汇总 `PROBE_SUMMARY_JSON`
+- 注入后端 guide 文本 `BACKEND_GUIDE`（由 executor 根据 backend 查表加载）
+- 重申输出字段要求
+
+这是 executor 与 LLM 之间的上下文承载模板，字段由 executor 代码组装。
+
+## 12. `executor_mp_spdz.txt`
+
+作用：
+
+- MP-SPDZ 专属 guide，会被 executor 注入到 user prompt 的 `BACKEND_GUIDE` 位置
+- 说明 MP-SPDZ 的 `.mpc` 语法要点（sint/sfix、get_input_from、reveal、@for_range 等）
+- 列出 `./compile.py` 编译参数（-R/-F/-Z）
+- 给出 configer mode/profile → Scripts/<protocol>.sh 的映射规则
+- 规定 `.mpc` 与 `.sh` 文件的命名、内容模板（包括 $MP_SPDZ_HOME、compile + run 步骤、回显协议和参数）
+
+后续若要支持其他后端，只需增加 `executor_<backend>.txt` 并在 executor 代码的 `BACKEND_GUIDE_FILES` 中注册。
+
+## 13. 当前设计特点
 
 - prompt 拆分清晰，按 agent 职责分开
 - planner 只做任务理解，不再有调度类 prompt
+- executor 采用 system + user + backend-guide 三层结构，后端可插拔
 - prompt 本身比较短，便于快速迭代
 
-## 11. 当前限制
+## 14. 当前限制
 
 - prompt 仍较简化，对边界情况约束不算强
 - 没有版本号或评测机制
 - 没有针对不同模型的适配层
+- executor 尚未为 secretflow 等后端提供 guide，当前会被 executor 跳过
 
 后续如果模型输出稳定性不足，优先应该从这个目录强化格式约束和规则说明。

@@ -53,7 +53,7 @@ class AutoConfigPipeline:
         if ctx.state.requires_probe:
             self._run_probe_phase(ctx, board)
         self._run_config_review_phase(ctx, board)
-        if ctx.state.request_execute and ctx.state.critic_approved:
+        if ctx.state.request_execute:
             self._run_executor_phase(ctx, board)
 
         ctx.state.status = "done"
@@ -147,8 +147,16 @@ class AutoConfigPipeline:
     def _run_executor_phase(self, ctx: RunContext, board: Blackboard) -> None:
         ctx.state.phase = "executing"
         assert ctx.config is not None
-        ctx.executor = self.executor.run(config=ctx.config, blackboard=board)
+        ctx.executor = self.executor.run(
+            config=ctx.config,
+            instruction=ctx.instruction,
+            probe=ctx.probe,
+            probe_report=ctx.probe_report,
+            blackboard=board,
+        )
         ctx.state.executed = True
+        if not ctx.state.critic_approved:
+            logger.info("executor_phase: running as fallback despite critic not approving")
         logger.info("executor_phase done: status=%s", ctx.executor.status)
 
     # ── build final result dict ──────────────────────────────────

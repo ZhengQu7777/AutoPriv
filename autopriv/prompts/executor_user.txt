@@ -1,0 +1,17 @@
+Generate the runnable artifacts for the following privacy-computing task.
+
+user_instruction: [[INSTRUCTION]]
+
+configer_output: [[CONFIG_JSON]]
+
+probe_latest: [[PROBE_JSON]]
+probe_summary: [[PROBE_SUMMARY_JSON]]
+
+backend_guide:
+[[BACKEND_GUIDE]]
+
+Instructions:
+- Decide task_type from user_instruction (e.g. psi / pir / compare / ml_training).
+- Use configer_output.backend, mode, profile, parallelism to drive protocol and parameter choices inside the generated files.
+- Follow the backend_guide strictly for file conventions.
+- Return JSON only with keys: task_type, mpc_file {name, content}, sh_file {name, content}, notes.

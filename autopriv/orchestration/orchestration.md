@@ -90,7 +90,7 @@
 1. _run_plan_phase()           -> planner 理解任务，写入 RunContext
 2. _run_probe_phase()          -> prober 采集环境（仅当 requires_probe=True）
 3. _run_config_review_phase()  -> configer + critic 主循环（含回退）
-4. _run_executor_phase()       -> 仅在 critic 通过且 request_execute=True 时执行
+4. _run_executor_phase()       -> 仅 request_execute=True 时执行（critic 未通过时也会兜底）
 5. _build_result()             -> 汇总所有结果
 ```
 
@@ -117,12 +117,11 @@
 
 ### 5.6 `_run_executor_phase()`
 
-只在两个条件同时满足时进入：
+进入条件只有一个：`context.state.request_execute = True`。
 
-- `context.state.critic_approved = True`
-- `context.state.request_execute = True`
+critic 是否 approve 不再作为门限。plan 约定 executor 是交付员，不让审查阻塞交付。当 critic 未通过时，executor 会按兜底策略基于最后一轮 `ConfigOutput` 继续生成工件，并在日志中记录 "running as fallback"。
 
-调用 `executor.run()` 产出 `ExecutorOutput`。
+executor 被传入：`config`、`instruction`、`probe`、`probe_report`、`blackboard`。由 executor 自己根据 backend 调度 prompt 并把 `.mpc` / `.sh` 落盘到 `output/` 目录。
 
 ## 6. 异常与兜底逻辑
 

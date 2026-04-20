@@ -22,6 +22,7 @@ class AppSettings:
     model_timeout_s: float = 30.0
     secretflow_env: str = "sf"
     secretflow_psi_script: str = "examples/psi/secretflow_psi_demo.py"
+    output_dir: str = "output"
     model: ModelSettings | None = None
 
 
@@ -47,11 +48,13 @@ def load_settings() -> AppSettings:
     )
     secretflow_env = os.getenv("AUTOPRIV_SECRETFLOW_ENV", "sf").strip() or "sf"
     secretflow_psi_script = os.getenv("AUTOPRIV_SECRETFLOW_PSI_SCRIPT", "examples/psi/secretflow_psi_demo.py").strip()
+    output_dir = os.getenv("AUTOPRIV_OUTPUT_DIR", "output").strip() or "output"
     return AppSettings(
         probe_interval_s=interval,
         model_timeout_s=timeout_s,
         secretflow_env=secretflow_env,
         secretflow_psi_script=secretflow_psi_script,
+        output_dir=output_dir,
         model=model_settings,
     )
 
