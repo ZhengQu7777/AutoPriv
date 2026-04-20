@@ -256,9 +256,13 @@
 
 ### 8.6 容错
 
-- LLM 返回非法 JSON 或异常：executor 返回 `status=error`，不抛出
+- LLM 返回非法 JSON 或异常（包括超时）：executor 返回 `status=error`，不抛出
 - `task_type` 非法字符会被规范化；文件名扩展名会被强制修正
 - `mpc_file`/`sh_file` 字段缺失时会填充占位注释
+
+### 8.7 超时配置
+
+executor 需要 LLM 输出 `.mpc` + `.sh` 两个完整文件，输出规模远大于其他 agent。默认超时通过 `AppSettings.executor_timeout_s`（默认 180 秒，环境变量 `AUTOPRIV_EXECUTOR_TIMEOUT_S` 可覆盖），独立于其他 agent 的 `model_timeout_s`（默认 30 秒）。这样既避免了 planner/configer/critic 的短查询被拉长，也避免了 executor 因为输出代码过长被 30 秒截断。
 
 ## 9. 各 agent 的协作关系
 

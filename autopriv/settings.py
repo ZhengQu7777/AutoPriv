@@ -20,6 +20,7 @@ class ModelSettings:
 class AppSettings:
     probe_interval_s: float = 300.0
     model_timeout_s: float = 30.0
+    executor_timeout_s: float = 180.0
     secretflow_env: str = "sf"
     secretflow_psi_script: str = "examples/psi/secretflow_psi_demo.py"
     output_dir: str = "output"
@@ -41,6 +42,12 @@ def load_settings() -> AppSettings:
     except ValueError:
         timeout_s = 30.0
 
+    executor_timeout_raw = os.getenv("AUTOPRIV_EXECUTOR_TIMEOUT_S", "180")
+    try:
+        executor_timeout_s = max(float(executor_timeout_raw), timeout_s)
+    except ValueError:
+        executor_timeout_s = 180.0
+
     model_settings = ModelSettings(
         api_key=os.getenv("AUTOPRIV_LLM_API_KEY"),
         base_url=os.getenv("AUTOPRIV_LLM_BASE_URL"),
@@ -52,6 +59,7 @@ def load_settings() -> AppSettings:
     return AppSettings(
         probe_interval_s=interval,
         model_timeout_s=timeout_s,
+        executor_timeout_s=executor_timeout_s,
         secretflow_env=secretflow_env,
         secretflow_psi_script=secretflow_psi_script,
         output_dir=output_dir,

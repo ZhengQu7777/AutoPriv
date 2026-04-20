@@ -37,7 +37,9 @@
 
 ## 5. 请求发送 `chat_json()`
 
-`chat_json(system_prompt, user_prompt, temperature=0.1)` 是整个模块最核心的方法。
+`chat_json(system_prompt, user_prompt, temperature=0.1, timeout_s=None)` 是整个模块最核心的方法。
+
+`timeout_s` 参数用于覆盖默认超时。当为 `None` 时使用 `AppSettings.model_timeout_s`（默认 30 秒）。executor 等输出量大的 agent 会传入更大的 `executor_timeout_s`（默认 180 秒）避免 LLM 生成长代码时被截断。
 
 ### 5.1 它如何组织请求
 

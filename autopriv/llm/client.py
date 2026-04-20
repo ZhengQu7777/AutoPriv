@@ -22,7 +22,13 @@ class LLMClient:
                 "Missing LLM config: AUTOPRIV_LLM_API_KEY, AUTOPRIV_LLM_BASE_URL and AUTOPRIV_LLM_MODEL are required"
             )
 
-    def chat_json(self, system_prompt: str, user_prompt: str, temperature: float = 0.1) -> dict[str, Any]:
+    def chat_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.1,
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
         self.ensure_ready()
         model = self.settings.model
         assert model is not None
@@ -47,7 +53,8 @@ class LLMClient:
                 "Authorization": f"Bearer {model.api_key}",
             },
         )
-        with urllib.request.urlopen(req, timeout=self.settings.model_timeout_s) as resp:
+        effective_timeout = timeout_s if timeout_s is not None else self.settings.model_timeout_s
+        with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
             raw = json.loads(resp.read().decode("utf-8"))
 
         content = raw["choices"][0]["message"]["content"]

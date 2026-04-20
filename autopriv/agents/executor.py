@@ -111,6 +111,7 @@ class ExecutorAgent(Agent):
         payload = self.llm.chat_json(
             system_prompt=self._system_prompt,
             user_prompt=user_prompt,
+            timeout_s=self.settings.executor_timeout_s,
         )
 
         task_type = _safe_task_type(payload.get("task_type", ""))
