@@ -7,54 +7,107 @@ MP-SPDZ is a framework implementing many multi-party computation (MPC) protocols
 A. .mpc FILE FORMAT — MANDATORY RULES (apply to any task, not just PSI)
 ======================================================================
 
-1. .mpc files are compiled as FLAT SCRIPTS, not imported as modules.
-   - DO NOT wrap logic in a `def main():` function.
-   - DO NOT use `if __name__ == '__main__':` guards.
-   - Write all top-level program logic directly at module scope.
+A1. .mpc files are compiled as FLAT SCRIPTS, not imported as modules.
+    - DO NOT wrap logic in a `def main():` function.
+    - DO NOT use `if __name__ == '__main__':` guards.
+    - Write all top-level program logic directly at module scope.
 
-2. Imports — either style works, pick ONE:
-   - Simple: `from Compiler import sint, sfix, cint, print_ln`
-   - Explicit: `from Compiler.types import sint, sfix, cint, Array, Matrix`
-               `from Compiler.library import print_ln, for_range, for_range_opt`
+A2. Imports — either style works, pick ONE:
+    - Simple: `from Compiler import sint, sfix, cint, print_ln`
+    - Explicit: `from Compiler.types import sint, sfix, cint, Array, Matrix`
+                `from Compiler.library import print_ln, for_range, for_range_opt`
 
-3. Types:
-   - sint — secret integer (shared among parties, values hidden)
-   - sfix — secret fixed-point
-   - cint — CLEAR integer (public to everyone); use only when the value is genuinely public
-   - Array / Matrix — containers; e.g. `sint.Array(N)` for a length-N secret int array
+A3. Types:
+    - sint — secret integer (shared among parties, values hidden)
+    - sfix — secret fixed-point
+    - cint — CLEAR integer (public to everyone); use only when the value is genuinely public
+    - Array / Matrix — containers; e.g. `sint.Array(N)` for a length-N secret int array
 
-4. Accumulators of secret values MUST be secret.
-   - WRONG: `count = cint(0); ... count.update(count + secret_bool)`
-   - RIGHT: `count = sint(0); ... count.update(count + secret_bool)`
-   Mixing cint with sint operands silently breaks the computation.
+A4. COMPILE-TIME SIZE RULE — CRITICAL
+    MP-SPDZ compiles a static circuit, so every array dimension and every loop
+    bound MUST be known at compile time. Use **Python int literals** or module-
+    level constants (e.g. `MAX_SIZE = 8`).
+    - WRONG: `set0 = sint.Array(size0)` where size0 is an sint / cint read from input.
+    - WRONG: `@for_range(size0)` with a runtime `size0`.
+    - RIGHT: `MAX_SIZE = 8; set0 = sint.Array(MAX_SIZE); @for_range(MAX_SIZE)`.
+    When the real data size is smaller than MAX_SIZE, use the PADDING pattern in A7.
 
-5. Inputs: `sint.get_input_from(party_id)` reads one secret input from the named party's Input-P<party_id>-0 file.
+A5. INPUT INTERFACE — CRITICAL
+    The only supported way to read inputs in .mpc is:
+    - `sint.get_input_from(party_id)`  — one secret integer from party_id's Input-P<party_id>-0
+    - `sfix.get_input_from(party_id)`  — one secret fixed-point
+    **There is NO `cint.read_from(party_id)` or similar method.** Using it raises
+    `AttributeError: 'cint' object has no attribute 'read_from'`. If you need a
+    public size, read it as `sint.get_input_from(party_id).reveal()` first.
 
-6. Loops:
-   - `@for_range(N)` — compile-time sequential loop over a public integer range
-   - `@for_range_opt(N)` — compiler picks an optimization strategy (parallel, unrolled)
-   - Public loop bounds only (N must be a Python int or cint).
+A6. Accumulators of secret values MUST be secret.
+    - WRONG: `count = cint(0); ... count.update(count + secret_bool)`
+    - RIGHT: `count = sint(0); ... count.update(count + secret_bool)`
+    Mixing cint with sint operands silently breaks the computation.
 
-7. Output: `value.reveal()` opens a secret to the clear, then use `print_ln('format', clear_val)` to print.
+A7. PADDING PATTERN — for variable-length inputs with a compile-time upper bound
+    When a task takes inputs of unknown real size, pick a MAX_SIZE at compile
+    time (from configer/probe, see A9), always read MAX_SIZE values, and mask
+    out the unused tail at runtime:
 
-8. For n>2 parties, document the party count as a top-level constant, and ensure the chosen protocol script supports that count.
+    ```
+    MAX_SIZE = 8
+    size0 = sint.get_input_from(0).reveal()   # real size, revealed as cint
+    set0  = sint.Array(MAX_SIZE)
+    @for_range(MAX_SIZE)
+    def _(i):
+        set0[i] = sint.get_input_from(0)
+    # ... during comparison use (i < size0) * (j < size1) as a mask.
+    ```
+
+A8. Loops:
+    - `@for_range(N)`      — compile-time sequential loop over N (Python int or cint).
+    - `@for_range_opt(N)`  — compiler picks parallelization strategy; prefer it for
+                             independent-iteration heavy loops.
+    - Loop bounds MUST be compile-time (see A4).
+
+A9. Output: `value.reveal()` opens a secret to the clear; then
+    `print_ln('format', clear_val)` prints it. Outputs are written to the
+    transcript file selected by the runner (e.g. `-OF output`).
+
+A10. OPTIMIZATION HINTS — use probe/configer to make sensible choices
+     Take advantage of what the configer and probe already know about the host:
+     - `probe.cpu_cores` / `config.parallelism` → prefer `@for_range_opt` for
+       inner loops, pick a MAX_SIZE that fits comfortably in memory.
+     - `probe.memory_gb` → bound MAX_SIZE so that a dense comparison matrix
+       (O(MAX_SIZE^2) for pairwise ops) does not blow up memory.
+     - `probe.rtt_ms` / `probe.bandwidth_mbps` → keep the circuit small when
+       network is tight; avoid unnecessary round-trip-inducing ops.
+     - For n-party tasks with small n (2 or 3), declare `N_PARTIES` as a
+       module-level constant so the script and .mpc stay in sync.
+     These hints are task-agnostic — they apply equally to PSI, PIR,
+     comparison, statistics, ML inference, etc.
 
 ======================================================================
 B. PROTOCOL SELECTION (map configer output → MP-SPDZ Scripts/*)
 ======================================================================
 
-- 2PC + semi-honest (online, balanced, latency_optimized, low_bandwidth) → Scripts/semi2k.sh  (ring-based, 2 parties)
-- 2PC + malicious or offline_precompute                                  → Scripts/mascot.sh  (malicious, field-based)
-- 3PC semi-honest (implied by task or >2 parties)                        → Scripts/replicated-ring-party.sh
-- Default when uncertain: Scripts/semi2k.sh
+Default: Scripts/semi2k.sh (2PC, semi-honest, ring-based). This is the
+simplest and cheapest protocol and should be the go-to choice when nothing
+in configer/instruction forces otherwise.
 
-Use the configer output to pick; if unsure, semi2k.
+Use a different protocol ONLY if clearly required:
+
+- 2PC + malicious / active security explicitly requested               → Scripts/mascot.sh (field-based, heavier).
+- 3PC semi-honest, honest-majority implied                             → Scripts/replicated-ring-party.sh.
+- n > 3 parties with malicious assumption                              → Scripts/mal-shamir.sh.
+
+When in doubt, choose `semi2k`. Do not pick malicious protocols just
+because `offline_precompute` is set — offline precomputation is orthogonal
+to security model.
 
 ======================================================================
 C. .sh FILE FORMAT — MANDATORY RULES
 ======================================================================
 
-The .sh is a single-host helper: copy the .mpc into MP-SPDZ tree, compile, run via the protocol script. It should be runnable on any machine where MP-SPDZ is installed, without user editing.
+The .sh is a single-host helper: copy the .mpc into the MP-SPDZ tree,
+compile, run via the protocol script. It should be runnable on any machine
+where MP-SPDZ is installed, without user editing.
 
 Required structure:
 
@@ -70,39 +123,54 @@ if [[ ! -x "$MP_SPDZ_HOME/compile.py" ]]; then
     exit 1
 fi
 
-# 2) Resolve this script's directory, so we can copy the .mpc sitting next to it.
+# 2) Resolve this script's directory so we can find the .mpc sitting next to it.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROGRAM="<program_name_without_extension>"
-PROTOCOL="<protocol_name>"        # e.g. semi2k / mascot / replicated-ring-party
+PROTOCOL="semi2k"   # default; see B for when to switch
 
-# 3) Copy the .mpc into MP-SPDZ source tree.
+# 3) Copy .mpc into MP-SPDZ source tree (overwrite is safe).
 cp "$SCRIPT_DIR/${PROGRAM}.mpc" "$MP_SPDZ_HOME/Programs/Source/"
 
-# 4) Compile. Use plain program name; do NOT pass -R unless required.
+# 4) Compile. The flag must match the chosen protocol family:
+#    - ring-based (semi2k / replicated-ring-party / dealer-ring …)   → -R 64
+#    - field-based (mascot / mal-shamir / semi / semi-honest-field)  → no -R
+#    For the default `semi2k`, -R 64 is REQUIRED; without it the compiler
+#    picks a prime field and semi2k-party.x will refuse to run with:
+#      "Program was compiled for a prime field, not a ring modulo a power of two."
 cd "$MP_SPDZ_HOME"
-./compile.py "$PROGRAM"
+./compile.py -R 64 "$PROGRAM"
 
-# 5) Remind user about Player-Data inputs (one line per secret input per party).
-echo "Reminder: ensure $MP_SPDZ_HOME/Player-Data/Input-P0-0 and Input-P1-0 (or more for n-party) are prepared."
+# 5) Remind user about Player-Data inputs — format depends on the .mpc:
+#    one secret int per line, in the order the program reads them.
+echo "Reminder: prepare $MP_SPDZ_HOME/Player-Data/Input-P0-0 (and Input-P1-0 for 2PC)."
 
-# 6) Run via the protocol wrapper script with explicit program name argument.
+# 6) Run via the protocol wrapper with explicit program name.
 ./Scripts/${PROTOCOL}.sh "$PROGRAM"
 ```
 
 Rules for generating the .sh:
-- DO NOT hardcode absolute user paths like /home/<user>/ or /Users/<user>/.
-- DO NOT pass -R/-F flags to compile.py unless the task truly requires a specific ring/field size; defaults are usually correct.
-- DO NOT wrap the run command in /usr/bin/time -v (not always available on macOS); if wall-clock is desired, use the bash built-in `time` before `./Scripts/...`.
-- Use `./Scripts/<protocol>.sh "$PROGRAM"` (program as explicit arg) so it runs our generated program rather than the script's default demo.
-- Surface configer-derived PARALLELISM as an echoed environmental hint (MP-SPDZ does not accept a uniform --threads flag; do not invent one).
-- Keep the script self-contained and idempotent: re-running should overwrite Programs/Source/<program>.mpc and re-compile cleanly.
+- DO NOT hardcode absolute user paths (no `/home/<user>/`, no `/Users/<user>/`).
+- For the default `semi2k` protocol, ALWAYS emit `./compile.py -R 64 "$PROGRAM"`.
+  Switch to `./compile.py "$PROGRAM"` (no -R) only when PROTOCOL is a field-based
+  protocol listed in section B.
+- Do NOT invent flags (no `--threads`, no `MP_SPDZ_THREADS` — MP-SPDZ has no
+  uniform threading flag). Surface `config.parallelism` only as an echo line,
+  informational.
+- Use `./Scripts/<protocol>.sh "$PROGRAM"` with explicit program arg — never
+  rely on the script's built-in default program.
+- Do NOT use `/usr/bin/time -v` (absent on macOS); use the bash built-in
+  `time` if wall-clock is desired.
+- Keep the script self-contained and idempotent: re-running should overwrite
+  `Programs/Source/<program>.mpc` and re-compile cleanly.
 
 ======================================================================
 D. FILE NAMING
 ======================================================================
 
-- mpc_file.name: <task_type>_task.mpc   (e.g. psi_task.mpc, pir_task.mpc)
-- sh_file.name:  run_<task_type>.sh     (e.g. run_psi.sh, run_pir.sh)
-- mpc top comment: "# <task_type> via MP-SPDZ — generated by AutoPriv executor"
+- mpc_file.name: `<task_type>_task.mpc`   (e.g. psi_task.mpc, pir_task.mpc)
+- sh_file.name:  `run_<task_type>.sh`     (e.g. run_psi.sh, run_pir.sh)
+- mpc top comment: `# <task_type> via MP-SPDZ — generated by AutoPriv executor`
 
-Keep the generated artifacts minimal and correct over clever. Correctness beats optimization for the first pass.
+Keep generated artifacts minimal and correct over clever. Correctness —
+specifically compile-time shape, supported input APIs, and matching
+protocol+compile flags — beats optimization for the first pass.

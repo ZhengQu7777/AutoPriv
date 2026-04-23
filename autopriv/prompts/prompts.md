@@ -130,10 +130,17 @@ configer 用到的 prompt 上下文是所有 agent 中最完整的。
 作用：
 
 - MP-SPDZ 专属 guide，会被 executor 注入到 user prompt 的 `BACKEND_GUIDE` 位置
-- 分 A/B/C/D 四段明确约束，都是普适规则（不是 PSI 专属）
-  - A. `.mpc` 文件格式：强制平展脚本（禁止 `def main()` / `if __name__ == '__main__'`）、导入风格、类型语义、**秘密累加器必须用 sint 而非 cint**、输入/输出/循环约定
-  - B. 协议选择：configer 输出 → `Scripts/*.sh` 映射（semi2k / mascot / replicated-ring-party / 默认 semi2k）
-  - C. `.sh` 文件格式：给出固定骨架模板，通过 `MP_SPDZ_HOME` 环境变量 + `$SCRIPT_DIR` 定位 `.mpc`，拷贝到 `Programs/Source/`，`./compile.py <program>` 后 `./Scripts/<protocol>.sh <program>`；严禁硬编码用户绝对路径，不强制 `-R` 参数，不使用 `/usr/bin/time -v`
+- 分 A/B/C/D 四段明确约束，都是任务无关的普适规则（不是 PSI 专属）
+  - A. `.mpc` 文件格式：
+    - A1-A3 平展脚本（禁止 `def main()` / `if __name__ == '__main__'`）、导入风格、类型语义
+    - **A4 编译期尺寸规则**：数组维度与循环上界必须是 Python int，不能用运行时 sint/cint
+    - **A5 输入接口**：只有 `sint.get_input_from` / `sfix.get_input_from`，不存在 `cint.read_from`
+    - A6 秘密累加器必须用 `sint(0)` 而非 `cint(0)`
+    - **A7 MAX_SIZE padding 范式**：用固定编译期 MAX_SIZE + 运行时 `i < size` mask 应对变长输入
+    - A8-A9 循环与输出的 DSL 约定
+    - **A10 基于 probe/configer 做合理优化**：MAX_SIZE / 并行度 / `@for_range_opt` 的选择应参考 `probe.cpu_cores` / `config.parallelism` / `probe.memory_gb` / `probe.rtt_ms` / `probe.bandwidth_mbps`
+  - B. 协议选择：**默认 `semi2k`**；只有明确需要恶意安全 / honest-majority / 大 n 方时才切其他协议；`offline_precompute` 不等同于 mascot
+  - C. `.sh` 文件格式：固定骨架，通过 `MP_SPDZ_HOME` + `$SCRIPT_DIR` 定位，**默认 `./compile.py -R 64 "$PROGRAM"` 配合 ring-based 协议**（field-based 的 mascot / mal-shamir 才省去 `-R`）；`./Scripts/<protocol>.sh "$PROGRAM"` 带显式程序名；严禁硬编码绝对路径、禁造假的 threading flag、不使用 `/usr/bin/time -v`
   - D. 文件命名：`<task_type>_task.mpc` 与 `run_<task_type>.sh`
 
 后续若要支持其他后端，只需增加 `executor_<backend>.txt` 并在 executor 代码的 `BACKEND_GUIDE_FILES` 中注册。

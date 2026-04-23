@@ -4,7 +4,7 @@
 
 ## 更改目的
 
-- 1. 修改相关的prompt使得框架针对`mp-spdz`生成的mpc文件能够正确在`mp-spdz`中运行。
+- 1. 继续修改相关的prompt使得框架针对`mp-spdz`生成的mpc文件能够正确在`mp-spdz`中运行。
 
 ## 更改思路与要求
 
@@ -19,17 +19,17 @@
 
 你需要看看两者不同，从而去修改对应的prompt使得mpc文件生成可以更加准确，注意这是一个psi任务的例子，不要使得prompt过于特化，使得后续其他不同任务生成受到影响。
 
+其重点在于：1.不应该去认为是动态输入，MP-SPDZ 编译阶段需要知道数组多大 2.sint.get_input_from是正确的而size0.read_from(0)会报错：AttributeError: 'cint' object has no attribute 'read_from'
+另外任务编写应该根据所得的本地设备的配置，尽量有些优化的写法。（比起不知道配置的情况）
+
 ### mpc运行指令例子
 
-当前运行生成的sh文件无法直接运行，我经过下面这样的指令可以运行。
-第一种运行方法：
-先进入mp-spdz目录
-./compile.py psi_task.mpc  // 先编译mpc文件
-./semi2k-party.x 0 psi_task -pn 13263 -h localhost -N 2 -OF output //一个窗口作为第0方运行两方协议，制定好端口与输出文件
-./semi2k-party.x 1 psi_task -pn 13263 -h localhost -N 2 -OF output //另一个窗口作为第1方运行两方协议，制定好端口与输出文件
-第二种运行方法：
-./compile.py psi_task.mpc  // 先编译mpc文件
-./Scripts/semi2k.sh //采用sh运行
+当前运行生成的sh文件无法直接运行，我经过下面这样的改动可以运行：
+报错：
+Program was compiled for a prime field, not a ring modulo a power of two. Use './compile.py -R <size>'.
+我将
+./compile.py "$PROGRAM"  改为 ./compile.py -R 64 "$PROGRAM" 可以运行
+另外默认协议应该是更简单的`semi2k`
 
 根据正确的运行方法，修改对应的prompt，使得sh文件生成更加正确。
 
@@ -40,18 +40,26 @@
 
 ## 更改后大致变化
 
-本次只改 `autopriv/prompts/executor_mp_spdz.txt`，executor 代码与流水线逻辑保持不变。prompt 重写后 LLM 生成的 `.mpc` / `.sh` 更符合 MP-SPDZ 实际语法与运行约定：
+本次只改 `autopriv/prompts/executor_mp_spdz.txt`，executor 代码与流水线逻辑保持不变。本次在上一轮基础上继续修正 LLM 生成工件的正确性，重点是编译期形状、输入接口、默认协议与编译参数的匹配：
 
-- `.mpc` 改为平展脚本（不再包 `def main()` / `if __name__ == '__main__'`），所有逻辑写在模块顶层。
-- 秘密值的累加器必须使用 `sint(0)`，防止 cint 误用导致秘密泄漏或类型错误。
-- 约束了合法的导入方式与类型选择（sint/sfix/cint 语义）。
-- 保留 configer → Scripts/<protocol>.sh 的映射，默认 semi2k。
-- `.sh` 不再硬编码用户路径：通过 `MP_SPDZ_HOME` 环境变量定位安装目录，用 `$SCRIPT_DIR` 定位 `.mpc` 所在目录，拷贝到 `$MP_SPDZ_HOME/Programs/Source/`。
-- `.sh` 默认不传 `-R` 参数，直接 `./compile.py <program>`；运行走 `./Scripts/<protocol>.sh <program>`（显式传程序名）。
-- 提醒用户准备 `Player-Data/Input-P0-0`、`Input-P1-0` 输入文件。
-- 去掉了不一定可用的 `/usr/bin/time -v`。
+新增/修正的普适规则（任务无关）：
 
-这些改动按任务普适规则组织（不是 PSI 专属），后续其他任务类型（PIR、比较、统计）也可复用同一套规则。
+- A4「编译期尺寸」：数组维度与循环上界必须是 Python int 或模块级常量；禁止用运行时 sint/cint 值作为维度或上界（`sint.Array(size0)`、`@for_range(size0)` 都是错的）。
+- A5「输入接口」：唯一合法的读入方式是 `sint.get_input_from(party)` / `sfix.get_input_from(party)`；**不存在** `cint.read_from`（会直接抛 `AttributeError: 'cint' object has no attribute 'read_from'`），需要公开 size 的话用 `sint.get_input_from(p).reveal()` 得到 cint。
+- A7「MAX_SIZE padding 范式」：对"实际长度未知"的输入，选一个编译期 MAX_SIZE、始终读 MAX_SIZE 个元素、运行时用 `i < size` 做 mask。这是 MPC 程序的通用模式，不止 PSI 适用。
+- A10「基于 probe/configer 做合理优化」：MAX_SIZE、`@for_range_opt` 的使用、是否上大并行度，应参考 `probe.cpu_cores` / `config.parallelism` / `probe.memory_gb` / `probe.rtt_ms` / `probe.bandwidth_mbps`；这些 hint 对所有任务类型都适用。
+- B 段默认协议：明确以 `semi2k` 为默认（2PC 半诚实，环上，最轻），`offline_precompute` 不再等同于 mascot（安全模型与离线预计算是正交的）。
+- C 段编译参数：默认 `./compile.py -R 64 "$PROGRAM"`，对应 ring-based 的 semi2k；field-based 协议（mascot / mal-shamir）才省去 `-R`。并在注释里直接给出 MP-SPDZ 的错误文案 "Program was compiled for a prime field, not a ring modulo a power of two." 让 LLM 理解为什么要带这个参数。
+
+上一轮已有的规则保留：
+
+- `.mpc` 平展脚本，无 `def main()` / `if __name__ == '__main__'`。
+- 秘密累加器用 `sint(0)`。
+- `.sh` 用 `MP_SPDZ_HOME` + `$SCRIPT_DIR` 定位，无硬编码绝对路径。
+- `./Scripts/<protocol>.sh "$PROGRAM"` 带显式程序名参数。
+- 不使用 `/usr/bin/time -v`。
+
+整体按任务无关规则组织，PIR、比较、统计、ML 推理等其他任务类型可直接复用。
 
 ## 更改后运行命令
 
