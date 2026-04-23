@@ -130,10 +130,11 @@ configer 用到的 prompt 上下文是所有 agent 中最完整的。
 作用：
 
 - MP-SPDZ 专属 guide，会被 executor 注入到 user prompt 的 `BACKEND_GUIDE` 位置
-- 说明 MP-SPDZ 的 `.mpc` 语法要点（sint/sfix、get_input_from、reveal、@for_range 等）
-- 列出 `./compile.py` 编译参数（-R/-F/-Z）
-- 给出 configer mode/profile → Scripts/<protocol>.sh 的映射规则
-- 规定 `.mpc` 与 `.sh` 文件的命名、内容模板（包括 $MP_SPDZ_HOME、compile + run 步骤、回显协议和参数）
+- 分 A/B/C/D 四段明确约束，都是普适规则（不是 PSI 专属）
+  - A. `.mpc` 文件格式：强制平展脚本（禁止 `def main()` / `if __name__ == '__main__'`）、导入风格、类型语义、**秘密累加器必须用 sint 而非 cint**、输入/输出/循环约定
+  - B. 协议选择：configer 输出 → `Scripts/*.sh` 映射（semi2k / mascot / replicated-ring-party / 默认 semi2k）
+  - C. `.sh` 文件格式：给出固定骨架模板，通过 `MP_SPDZ_HOME` 环境变量 + `$SCRIPT_DIR` 定位 `.mpc`，拷贝到 `Programs/Source/`，`./compile.py <program>` 后 `./Scripts/<protocol>.sh <program>`；严禁硬编码用户绝对路径，不强制 `-R` 参数，不使用 `/usr/bin/time -v`
+  - D. 文件命名：`<task_type>_task.mpc` 与 `run_<task_type>.sh`
 
 后续若要支持其他后端，只需增加 `executor_<backend>.txt` 并在 executor 代码的 `BACKEND_GUIDE_FILES` 中注册。
 
