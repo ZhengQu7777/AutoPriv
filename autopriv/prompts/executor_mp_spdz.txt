@@ -47,18 +47,32 @@ A6. Accumulators of secret values MUST be secret.
 
 A7. PADDING PATTERN — for variable-length inputs with a compile-time upper bound
     When a task takes inputs of unknown real size, pick a MAX_SIZE at compile
-    time (from configer/probe, see A9), always read MAX_SIZE values, and mask
-    out the unused tail at runtime:
+    time (from configer/probe, see A10), always read MAX_SIZE values, and
+    PREFER zeroing the padding *at read time* — every downstream op then
+    treats inactive slots as 0 automatically and you don't need to keep
+    re-applying `(i < size)` masks:
 
     ```
     MAX_SIZE = 8
-    size0 = sint.get_input_from(0).reveal()   # real size, revealed as cint
+    size0 = sint.get_input_from(0).reveal()        # real size, cint
+    size1 = sint.get_input_from(1).reveal()
     set0  = sint.Array(MAX_SIZE)
+    set1  = sint.Array(MAX_SIZE)
+
     @for_range(MAX_SIZE)
     def _(i):
-        set0[i] = sint.get_input_from(0)
-    # ... during comparison use (i < size0) * (j < size1) as a mask.
+        val = sint.get_input_from(0)
+        set0[i] = val * (i < size0)                # padding rows store 0
+
+    @for_range(MAX_SIZE)
+    def _(i):
+        val = sint.get_input_from(1)
+        set1[i] = val * (i < size1)
     ```
+
+    For the comparison phase you may still use `(i < size0) * (j < size1)`
+    explicitly when the operation isn't "x times mask" friendly (e.g. you
+    need to suppress an equality bit, not a value).
 
 A8. Loops:
     - `@for_range(N)`      — compile-time sequential loop over N (Python int or cint).
@@ -82,6 +96,81 @@ A10. OPTIMIZATION HINTS — use probe/configer to make sensible choices
        module-level constant so the script and .mpc stay in sync.
      These hints are task-agnostic — they apply equally to PSI, PIR,
      comparison, statistics, ML inference, etc.
+
+A11. NO DATA-DEPENDENT CONTROL FLOW — CRITICAL
+     Python `if` / `while` cannot branch on a value derived from inputs —
+     not on `sint`, not on `sfix`, not even on a `cint` / `regint` produced
+     by `.reveal()` inside a `@for_range`. The compiler builds a STATIC
+     circuit: any data-dependent branch either silently produces wrong
+     results or fails to compile. Use **mask multiplication** instead.
+
+     WRONG (the framework keeps generating this and it does not run):
+        if active_i:                       # active_i = i < size0
+            ...
+        if is_match:
+            intersection[count] = elem
+            count.update(count + 1)
+
+     RIGHT — compute a 0/1 mask, then fold it into ordinary arithmetic:
+        mask = (i < size0) * (set0[i] == set1[j])      # 0/1 sint
+        # conditional accumulate
+        acc.update(acc + mask)
+        # conditional write (no push-back; fixed slot, masked value)
+        out[i] = mask * candidate + (1 - mask) * out[i]
+
+     Common shapes:
+     - skip-update:     `arr[i] = mask * new_val + (1 - mask) * arr[i]`
+     - conditional add: `acc.update(acc + mask * delta)`
+     - conditional zero:`out_i = val * mask`        # 0 when mask == 0
+
+A12. PUBLIC INDICES ONLY
+     Array subscripts must be a **Python int** (compile-time) or a
+     **loop variable** from `@for_range` / `@for_range_opt`. Secret values
+     (sint/sfix) cannot index arrays. Patterns like `out[secret_count] = x`
+     are INVALID — they require oblivious RAM and the .mpc DSL won't compile
+     them.
+
+     WRONG (push-back via secret counter):
+        intersection[intersection_count] = set0[i]
+        intersection_count.update(intersection_count + 1)
+
+     RIGHT (tag-then-collect: keep one fixed slot per input position; mark
+     unmatched slots as 0; count by counting nonzero positions):
+        intersection[i] = match_mask_i * set0[i]   # 0 if not matched
+        # later:
+        @for_range(MAX_SIZE)
+        def _(i):
+            count.update(count + (intersection[i] != 0))
+
+A13. for_range BOUNDS MUST BE COMPILE-TIME
+     `@for_range(N)` and `@for_range_opt(N)` require N to be a Python int
+     (or a module-level constant). DO NOT use a `.reveal()`-ed runtime
+     value as the loop bound. To "iterate up to a runtime size",
+     iterate over the full MAX_SIZE and mask the output:
+
+     WRONG:
+        revealed = count.reveal()
+        @for_range(revealed)            # revealed is runtime cint
+        def _(k):
+            print_ln('%s', intersection[k].reveal())
+
+     RIGHT:
+        @for_range(MAX_SIZE)
+        def _(i):
+            mask = i < revealed_count    # 0/1 cint
+            print_ln('%s', intersection[i].reveal() * mask)
+        # entries past revealed_count print as 0; the consumer ignores them.
+
+A14. CONTROL-FLOW QUICK CHECKLIST (apply before emitting any .mpc)
+     1. Search for `if ` / `while ` lines. The condition MUST be a pure
+        Python value (not an sint/sfix/cint/regint, and not derived from
+        them). Otherwise rewrite via mask (A11).
+     2. Search for array subscripts `[expr]`. `expr` MUST be a compile-time
+        int or loop variable (A12). No secret-indexed reads/writes.
+     3. Search for `@for_range(...)`. The argument MUST be a Python int or
+        a module-level constant (A13). No `.reveal()` results.
+     4. Confirm every input that's read MAX_SIZE times has a matching
+        MAX_SIZE entries on the corresponding `Player-Data/Input-P*-0`.
 
 ======================================================================
 B. PROTOCOL SELECTION (map configer output → MP-SPDZ Scripts/*)
@@ -171,6 +260,62 @@ D. FILE NAMING
 - sh_file.name:  `run_<task_type>.sh`     (e.g. run_psi.sh, run_pir.sh)
 - mpc top comment: `# <task_type> via MP-SPDZ — generated by AutoPriv executor`
 
+======================================================================
+E. ALGORITHM CHOICE BY PROBLEM SIZE
+======================================================================
+
+MP-SPDZ compiles your script into a STATIC circuit; cost grows with the
+*number of secret operations*, not just the data size. A naïve O(n^2)
+mask-scan that's fine for n=20 will be unusable at n=2000. Pick the
+strategy from the chosen MAX_SIZE (which already reflects probe/configer
+limits, see A10) BEFORE writing the loop body.
+
+E1. Small (MAX_SIZE ≤ ~256):
+    Naïve mask-based scan is fine and easiest to write correctly.
+    For PSI: pairwise compare with `(i < size0) * (j < size1)` mask.
+    For comparison/statistics: a single pass over MAX_SIZE.
+
+E2. Medium (MAX_SIZE in the range 10^3 – 10^4):
+    Avoid full O(n^2) pairwise. For SET-INTERSECTION-style tasks
+    (PSI, set membership, deduplication), use a SORT-BASED approach:
+      1) obliviously sort each party's padded array inside MPC
+         (e.g. `set0.sort()` if available in this MP-SPDZ build, otherwise
+         hand-roll a bitonic / odd-even merge sort over MAX_SIZE);
+      2) merge with a single linear pass, equality-check adjacent
+         positions across the two sorted streams;
+      3) total cost drops from O(n^2) compares to O(n log^2 n) /
+         O(n log n) compares.
+    For aggregation/statistics, prefer a single linear pass with masks;
+    do not nest loops unnecessarily.
+    Note this in the .mpc top comment, e.g.
+       `# strategy: sort-merge PSI; MAX_SIZE=2048`.
+
+E3. Large (MAX_SIZE ≥ ~10^5):
+    Naïve and sort-based approaches both become expensive. Consider
+    HASH-BASED / OPRF-style PSI (Cuckoo-hash bucketing + OPRF), which
+    pure MP-SPDZ DSL cannot always express cleanly. If the chosen
+    backend cannot deliver this efficiently:
+      - downgrade gracefully to E2 with a clear warning, OR
+      - emit a `notes` entry telling the user this scale is better
+        served by a PSI-specific framework (e.g. SecretFlow PSI),
+        rather than silently producing an O(n^2) circuit that will
+        never finish.
+
+E4. ALWAYS state the chosen strategy in the .mpc top comment so the
+    reader can audit cost and security:
+       `# strategy: naive O(n^2) mask scan; MAX_SIZE=20`
+       `# strategy: sort-merge intersection; MAX_SIZE=2048`
+       `# strategy: linear sum reduction; MAX_SIZE=10000`
+
+These rules are written in a task-agnostic spirit but are most relevant
+to set-based tasks (PSI / membership / dedup). For non-set tasks
+(statistics, comparison, simple arithmetic), E1 is normally enough — do
+NOT over-engineer a sort layer when a single linear pass suffices.
+
+======================================================================
+
 Keep generated artifacts minimal and correct over clever. Correctness —
-specifically compile-time shape, supported input APIs, and matching
-protocol+compile flags — beats optimization for the first pass.
+specifically compile-time shape, supported input APIs, no data-dependent
+branches, no secret indices, and matching protocol+compile flags — beats
+optimization for the first pass. Pick the smallest strategy from E that
+fits the chosen MAX_SIZE.
